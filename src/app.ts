@@ -3,13 +3,14 @@
 import { alertDialog, confirmDialog, dialogOpen, editNode, promptText } from "./dialogs";
 import { History, type SelectionRef, type Snapshot } from "./history";
 import { NODE_H, NODE_W, layoutTree, type Layout } from "./layout";
-import { ProbabilityTree, Exit, Node, fmtPct, parseTree, serializeTree } from "./model";
+import { ProbabilityTree, Exit, Node, fmtPct, parseTree, serializeTree, simulate } from "./model";
 import { openFile, saveFile, setWindowTitle, onCloseRequested, type FileRef } from "./platform";
-import { EXIT_PALETTE, Link, esc, renderDragLine, renderScene, sameItem, type Item } from "./render";
+import { EXIT_PALETTE, Link, esc, renderDragLine, renderScene, sameItem, type Item, type SimulationView } from "./render";
 import exampleTree from "../examples/mars_lander.json?raw";
 
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 3;
+const SIM_STEP_MS = 450; // time the simulation spends on each node
 
 type MenuEntry = { label: string; run: () => void; disabled?: boolean; checked?: boolean } | { heading: string } | "sep";
 
@@ -29,6 +30,8 @@ export class App {
   private history = new History();
   private committed: Snapshot; // the tree as of the last recorded change, plus the current selection
   private savedText: string; // the tree as last saved or opened, to tell whether there are unsaved changes
+  private sim: SimulationView | null = null; // the simulated run being shown, if any
+  private simTimer: number | undefined;
 
   private canvas = $("#canvas");
   private svg = $<SVGSVGElement>("#svg");
@@ -80,7 +83,8 @@ export class App {
   }
 
   private draw(): void {
-    this.scene.innerHTML = renderScene({ tree: this.tree, layout: this.layout, selected: this.selected, exitColor: this.exitColor });
+    this.scene.innerHTML = renderScene({ tree: this.tree, layout: this.layout, selected: this.selected, exitColor: this.exitColor, sim: this.sim });
+    this.svg.classList.toggle("simulating", this.sim !== null);
   }
 
   private applyView(animate = false): void {
@@ -431,6 +435,7 @@ export class App {
       addExit: () => this.addExit(),
       edit: () => this.editSelected(),
       delete: () => this.deleteSelected(),
+      simulate: () => this.runSimulation(),
       split: () => this.splitEvenly(),
       normalize: () => this.normalize(),
       zoomOut: () => this.setZoom(this.view.k / 1.2),
@@ -470,7 +475,10 @@ export class App {
       if (dialogOpen() || e.altKey) return;
       const t = e.target as HTMLElement;
       if (t.closest("input, textarea, select, [contenteditable]")) return;
-      if (e.key === "Escape") return this.hideMenu();
+      if (e.key === "Escape") {
+        this.hideMenu();
+        return this.stopSimulation();
+      }
       if (!this.menu.hidden) return; // let the menu's buttons take Enter etc.
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
@@ -500,6 +508,7 @@ export class App {
             ArrowUp: () => this.navigate("prev"),
             ArrowDown: () => this.navigate("next"),
             f: () => this.zoomFit(),
+            r: () => this.runSimulation(),
           }[key];
       if (!run) return;
       e.preventDefault();
@@ -513,6 +522,7 @@ export class App {
 
   select(item: Item, scroll = true): void {
     if (sameItem(item, this.selected)) return;
+    this.stopSimulation(false);
     this.selected = item;
     this.committed.sel = this.selectionRef();
     this.draw();
@@ -522,6 +532,7 @@ export class App {
 
   /** Call after every edit to the tree: records it for undo, then redraws. */
   private changed(label: string): void {
+    this.stopSimulation(false);
     const now = this.snapshot();
     if (now.text !== this.committed.text) this.history.push(this.committed, label);
     this.committed = now;
@@ -544,6 +555,7 @@ export class App {
   }
 
   private restore(snap: Snapshot): void {
+    this.stopSimulation(false);
     this.tree = parseTree(snap.text);
     const sel = snap.sel;
     const nodes = [...this.tree.root.walk()];
@@ -756,6 +768,57 @@ export class App {
     }
   }
 
+  // --- simulation ----------------------------------------------------------------
+
+  /** Simulate one event: walk from the root, picking branches by probability, and show it. */
+  runSimulation(): void {
+    this.stopSimulation(false);
+    const { path, stoppedEarly } = simulate(this.tree.root);
+    const leaf = path[path.length - 1];
+    const exit = !stoppedEarly && leaf.isLeaf ? leaf.exit : null;
+    const labels = path.map((n) => n.label);
+
+    const finish = () => {
+      this.sim = { path: new Set(path), current: leaf, exit };
+      this.draw();
+      this.scrollIntoView(exit ?? leaf);
+      let text = `Simulated: ${labels.join(" → ")}`;
+      if (stoppedEarly) {
+        const covered = leaf.childrenSum();
+        text += `, then stopped: “${leaf.label}”'s branches only cover ${fmtPct(covered)} and this run fell in the other ${fmtPct(1 - covered)}`;
+      } else {
+        text += exit ? ` → exit “${exit.label}”` : " (no exit)";
+        text += ` | chance of this path: ${fmtPct(leaf.cumulative)}`;
+      }
+      this.setStatus(text + " | R to run again, Esc to clear");
+    };
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return finish();
+    // Step along the path one node at a time, then light up the exit.
+    let i = 0;
+    const step = () => {
+      if (i === path.length) return finish();
+      const node = path[i++];
+      this.sim = { path: new Set(path.slice(0, i)), current: node, exit: null };
+      this.draw();
+      this.scrollIntoView(node);
+      this.setStatus(`Simulating… ${labels.slice(0, i).join(" → ")}`);
+      this.simTimer = window.setTimeout(step, SIM_STEP_MS);
+    };
+    step();
+  }
+
+  /** Clear any simulated run; `redraw` is false when the caller redraws anyway. */
+  stopSimulation(redraw = true): void {
+    window.clearTimeout(this.simTimer);
+    if (this.sim === null) return;
+    this.sim = null;
+    if (redraw) {
+      this.draw();
+      this.updatePanel();
+    }
+  }
+
   // --- files ---------------------------------------------------------------------
 
   /** Offer to save unsaved changes; resolves to false if the user cancels. */
@@ -771,6 +834,7 @@ export class App {
   }
 
   private load(tree: ProbabilityTree, file: FileRef | null): void {
+    this.stopSimulation(false);
     this.tree = tree;
     this.selected = tree.root;
     this.file = file;

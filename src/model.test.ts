@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { ProbabilityTree, Node, fmtPct, parseProbability, parseTree, serializeTree } from "./model";
+import { ProbabilityTree, Node, fmtPct, parseProbability, parseTree, serializeTree, simulate } from "./model";
 
 const repoFile = (name: string) => readFileSync(fileURLToPath(new URL(`../${name}`, import.meta.url)), "utf8");
 
@@ -131,5 +131,62 @@ describe("probability input", () => {
     [0.12345678, "12.3457%"],
   ])("formats %d as %s", (p, text) => {
     expect(fmtPct(p)).toBe(text);
+  });
+});
+
+describe("simulate", () => {
+  const tree = () => {
+    const root = new Node("Start");
+    const a = root.addChild("A", 0.25);
+    root.addChild("B", 0.75);
+    a.addChild("A1", 0.5);
+    a.addChild("A2", 0.5);
+    return root;
+  };
+  const labels = (r: { path: Node[] }) => r.path.map((n) => n.label);
+
+  it("picks branches by their probabilities", () => {
+    // 0.1 → A (first 25%), then 0.6 → A2 (second half).
+    const rolls = [0.1, 0.6];
+    expect(labels(simulate(tree(), () => rolls.shift()!))).toEqual(["Start", "A", "A2"]);
+    expect(labels(simulate(tree(), () => 0.25))).toEqual(["Start", "B"]);
+    expect(labels(simulate(tree(), () => 0.999999))).toEqual(["Start", "B"]);
+  });
+
+  it("stops early when the roll lands in a node's missing share", () => {
+    const root = new Node("Start");
+    root.addChild("A", 0.6);
+    expect(simulate(root, () => 0.5)).toMatchObject({ stoppedEarly: false });
+    const r = simulate(root, () => 0.7);
+    expect(r.stoppedEarly).toBe(true);
+    expect(labels(r)).toEqual(["Start"]);
+  });
+
+  it("never takes a zero-probability branch", () => {
+    const root = new Node("Start");
+    root.addChild("Never", 0);
+    root.addChild("Always", 1);
+    expect(labels(simulate(root, () => 0))).toEqual(["Start", "Always"]);
+  });
+
+  it("scales over-full branches instead of favouring the first", () => {
+    const root = new Node("Start");
+    root.addChild("A", 1);
+    root.addChild("B", 1);
+    expect(labels(simulate(root, () => 0.75))).toEqual(["Start", "B"]);
+  });
+
+  it("matches the probabilities over many runs", () => {
+    const root = tree();
+    let seed = 1;
+    const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const counts = new Map<string, number>();
+    const n = 20000;
+    for (let i = 0; i < n; i++) {
+      const leaf = simulate(root, rand).path.at(-1)!.label;
+      counts.set(leaf, (counts.get(leaf) ?? 0) + 1);
+    }
+    expect(counts.get("B")! / n).toBeCloseTo(0.75, 1);
+    expect(counts.get("A1")! / n).toBeCloseTo(0.125, 1);
   });
 });

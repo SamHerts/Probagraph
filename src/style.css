@@ -18,6 +18,9 @@
   --leaf: #e3f5e6;
   --bar: #2563eb;
   --track: rgba(29, 36, 48, 0.08);
+  --sim: #d97706;
+  --sim-soft: rgba(217, 119, 6, 0.3);
+  --sim-text: #ffffff;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.08), 0 2px 6px rgba(16, 24, 40, 0.06);
   color-scheme: light;
 }
@@ -42,6 +45,9 @@
     --leaf: #1b3326;
     --bar: #5b8cff;
     --track: rgba(255, 255, 255, 0.08);
+    --sim: #fbbf24;
+    --sim-soft: rgba(251, 191, 36, 0.3);
+    --sim-text: #1d2430;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);
     color-scheme: dark;
   }
@@ -77,7 +83,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 14px;
+  gap: 6px 10px;
   padding: 8px 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -104,7 +110,7 @@ button {
 .group button {
   border: 0;
   background: transparent;
-  padding: 4px 10px;
+  padding: 4px 8px;
   border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
@@ -333,6 +339,8 @@ td.path .crumbs {
 }
 
 #status {
+  flex: 0 0 auto;
+  max-width: 100%;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -342,7 +350,11 @@ td.path .crumbs {
   color: var(--warn);
 }
 
+/* The status message keeps its full width; the hints get whatever room is left. */
 .hints {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -552,6 +564,88 @@ svg text {
 
 #overlay {
   pointer-events: none;
+}
+
+/* --- simulation: the run's path in amber, everything else faded back ---------------- */
+
+.node,
+.exit,
+.edge,
+.pill,
+.link {
+  transition: opacity 0.2s ease;
+}
+
+#svg.simulating .node:not(.sim),
+#svg.simulating .exit:not(.sim) {
+  opacity: 0.35;
+}
+
+#svg.simulating .edge:not(.sim),
+#svg.simulating .pill:not(.sim) {
+  opacity: 0.25;
+}
+
+#svg.simulating .link:not(.sim),
+#svg.simulating .junction {
+  opacity: 0.12;
+}
+
+#svg.simulating .link.sim {
+  opacity: 1;
+}
+
+.edge.sim {
+  stroke: var(--sim);
+  stroke-width: 4;
+}
+
+.pill.sim rect {
+  fill: var(--sim);
+}
+
+.pill.sim text {
+  fill: var(--sim-text);
+}
+
+.link.sim path.wire {
+  stroke-width: 4;
+}
+
+.node.sim .card,
+.node.sim:hover .card,
+.exit.sim .card,
+.exit.sim:hover .card {
+  stroke: var(--sim);
+  stroke-width: 2.5;
+  stroke-dasharray: none;
+}
+
+.sim .halo {
+  stroke: var(--sim-soft);
+  stroke-width: 6;
+}
+
+.sim-now .halo {
+  stroke: var(--sim);
+  animation: sim-pulse 0.7s ease-out infinite alternate;
+}
+
+@keyframes sim-pulse {
+  from {
+    stroke-width: 3;
+    opacity: 0.9;
+  }
+  to {
+    stroke-width: 12;
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sim-now .halo {
+    animation: none;
+  }
 }
 
 /* --- menu and dialogs ------------------------------------------------------------- */

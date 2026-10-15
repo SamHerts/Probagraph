@@ -35,6 +35,9 @@ branches don't add up to 100% are outlined in orange.
 - Split children evenly, or scale them to 100%: toolbar or right-click menu
 - Pan: drag empty space, or scroll (Shift for horizontal)
 - Zoom: Ctrl+scroll or pinch, Ctrl+plus and Ctrl+minus, Ctrl+0 to reset, F to fit
+- Simulate one event: R or the Simulate button. The run starts at the entrance node
+  and takes each branch at random according to its probability, highlighting the path
+  it takes and the exit it reaches. Esc clears it.
 - Undo and redo: Ctrl+Z, and Ctrl+Shift+Z or Ctrl+Y (also in the toolbar)
 - Save and open: Ctrl+S and Ctrl+O
 

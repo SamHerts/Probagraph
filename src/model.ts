@@ -319,3 +319,33 @@ export function parseProbability(text: string): number {
 export function fmtPct(p: number): string {
   return (p * 100).toFixed(4).replace(/0+$/, "").replace(/\.$/, "") + "%";
 }
+
+export interface SimulationResult {
+  path: Node[]; // from the root to where the run ended
+  stoppedEarly: boolean; // true if the run fell in the share a node's branches don't cover
+}
+
+/**
+ * Simulate one event: start at the root and repeatedly take a branch at random, weighted
+ * by its probability, until reaching a leaf. If a node's branches add up to less than
+ * 100%, the run can land in the missing share and stop there. `random` returns [0, 1).
+ */
+export function simulate(root: Node, random: () => number = Math.random): SimulationResult {
+  const path = [root];
+  let node = root;
+  while (!node.isLeaf) {
+    const total = node.childrenSum();
+    // Complete (or over-full) branches are scaled to their actual sum, so rounding
+    // can't make a complete node stop early.
+    let r = random() * (node.childrenComplete() || total > 1 ? total : 1);
+    const next = node.children.find((c) => {
+      if (r < c.prob) return true;
+      r -= c.prob;
+      return false;
+    });
+    if (next === undefined) return { path, stoppedEarly: true };
+    path.push(next);
+    node = next;
+  }
+  return { path, stoppedEarly: false };
+}

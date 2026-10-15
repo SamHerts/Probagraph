@@ -29,6 +29,9 @@
         <button data-action="delete" title="Delete the selection (Del)">Delete</button>
       </div>
       <div class="group">
+        <button data-action="simulate" title="Simulate one event: walk the tree picking branches by their chances (R)">Simulate</button>
+      </div>
+      <div class="group">
         <button data-action="split" title="Give the children equal probabilities">Split evenly</button>
         <button data-action="normalize" title="Scale the children so they add up to 100%">Normalize</button>
       </div>
@@ -73,7 +76,7 @@
 
     <footer class="statusbar">
       <span id="status"></span>
-      <span class="hints">Ctrl+Z undo · A child · S sibling · X exit · Enter edit · Del delete (also a selected connection) · drag a leaf onto an exit · Ctrl+wheel zoom · F fit</span>
+      <span class="hints">R simulate · Ctrl+Z undo · A child · S sibling · X exit · Enter edit · Del delete (also a selected connection) · drag a leaf onto an exit · Ctrl+wheel zoom · F fit</span>
     </footer>
 
     <div class="menu" id="menu" role="menu" hidden></div>

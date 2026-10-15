@@ -23,11 +23,19 @@ export function sameItem(a: Item | null, b: Item | null): boolean {
   return a === b;
 }
 
+/** A simulated run being shown: the nodes it has reached so far, and its exit once it gets there. */
+export interface SimulationView {
+  path: Set<Node>;
+  current: Node; // the node the run has just reached
+  exit: Exit | null; // set once the run reaches a linked leaf
+}
+
 export interface Scene {
   tree: ProbabilityTree;
   layout: Layout;
   selected: Item;
   exitColor: Map<Exit, string>;
+  sim: SimulationView | null;
 }
 
 export function esc(s: string): string {
@@ -79,7 +87,7 @@ export function focusExit(selected: Item): Exit | null {
 }
 
 export function renderScene(s: Scene): string {
-  const { tree, layout, selected, exitColor } = s;
+  const { tree, layout, selected, exitColor, sim } = s;
   const pos = layout.pos;
   const focus = focusExit(selected);
   const out: string[] = [];
@@ -101,7 +109,7 @@ export function renderScene(s: Scene): string {
     const d = elbowPath(lp.x + NODE_W, lp.y, layout.laneX.get(ex)!, ep.y, ep.x - head + 1, 10);
     // An invisible wide stroke under the wire makes it easy to click.
     out.push(
-      `<g class="link${faded}${isSelected ? " selected" : ""}" data-link="${leaf.id}" style="--c:${exitColor.get(ex)}">` +
+      `<g class="link${faded}${isSelected ? " selected" : ""}${sim?.exit === ex && sim.path.has(leaf) ? " sim" : ""}" data-link="${leaf.id}" style="--c:${exitColor.get(ex)}">` +
         `<title>${esc(leaf.label)} → ${esc(ex.label)}</title>` +
         `<path class="hit" d="${d}"/>` +
         `<path class="wire" d="${d}" stroke-width="${strong ? 3.5 : 2}"/>` +
@@ -131,7 +139,7 @@ export function renderScene(s: Scene): string {
       const x0 = p.x + NODE_W;
       const mx = (x0 + c.x) / 2;
       const w = 1.5 + 3.5 * child.cumulative;
-      out.push(`<path class="edge" d="M${f(x0)},${f(p.y)}C${f(mx)},${f(p.y)} ${f(mx)},${f(c.y)} ${f(c.x)},${f(c.y)}" stroke-width="${f(w)}"/>`);
+      out.push(`<path class="edge${sim?.path.has(child) ? " sim" : ""}" d="M${f(x0)},${f(p.y)}C${f(mx)},${f(p.y)} ${f(mx)},${f(c.y)} ${f(c.x)},${f(c.y)}" stroke-width="${f(w)}"/>`);
     }
   }
   for (const node of tree.root.walk()) {
@@ -142,7 +150,7 @@ export function renderScene(s: Scene): string {
       const right = c.x - 6;
       const top = c.y - 6 - 18;
       out.push(
-        `<g class="pill" data-id="${child.id}"><rect x="${f(right - pw)}" y="${f(top)}" width="${f(pw)}" height="18" rx="9"/>` +
+        `<g class="pill${sim?.path.has(child) ? " sim" : ""}" data-id="${child.id}"><rect x="${f(right - pw)}" y="${f(top)}" width="${f(pw)}" height="18" rx="9"/>` +
           `<text x="${f(right - pw / 2)}" y="${f(top + 9)}">${esc(label)}</text></g>`,
       );
     }
@@ -150,16 +158,24 @@ export function renderScene(s: Scene): string {
   out.push("</g>");
 
   out.push('<g class="nodes">');
-  for (const node of tree.root.walk()) out.push(renderNode(node, pos.get(node)!, selected, exitColor));
-  for (const ex of tree.exits) out.push(renderExit(tree, ex, pos.get(ex)!, selected, exitColor.get(ex)!));
+  for (const node of tree.root.walk()) out.push(renderNode(node, pos.get(node)!, selected, exitColor, sim));
+  for (const ex of tree.exits) out.push(renderExit(tree, ex, pos.get(ex)!, selected, exitColor.get(ex)!, sim));
   out.push("</g>");
   return out.join("");
 }
 
-function renderNode(node: Node, p: { x: number; y: number }, selected: Item, exitColor: Map<Exit, string>): string {
+/** Simulation classes: "sim" for everything on the run's path, "sim-now" for where it is. */
+function simClass(sim: SimulationView | null, onPath: boolean, isNow: boolean): string {
+  if (!sim || !onPath) return "";
+  return isNow ? "sim sim-now" : "sim";
+}
+
+function renderNode(node: Node, p: { x: number; y: number }, selected: Item, exitColor: Map<Exit, string>, sim: SimulationView | null): string {
   const kind = node.isRoot ? "root" : node.isLeaf ? "leaf" : "inner";
   const incomplete = !node.childrenComplete();
-  const cls = ["node", kind, node === selected ? "selected" : "", incomplete ? "incomplete" : ""].join(" ");
+  const onPath = sim?.path.has(node) ?? false;
+  const isNow = sim?.current === node && sim.exit === null;
+  const cls = ["node", kind, node === selected ? "selected" : "", incomplete ? "incomplete" : "", simClass(sim, onPath, isNow)].join(" ");
   const cum = node.cumulative;
   const color = node.exit !== null && node.isLeaf ? exitColor.get(node.exit)! : null;
   const barW = NODE_W - 24 - (color ? 6 : 0);
@@ -183,9 +199,9 @@ function renderNode(node: Node, p: { x: number; y: number }, selected: Item, exi
   return parts.join("");
 }
 
-function renderExit(tree: ProbabilityTree, ex: Exit, p: { x: number; y: number }, selected: Item, color: string): string {
+function renderExit(tree: ProbabilityTree, ex: Exit, p: { x: number; y: number }, selected: Item, color: string, sim: SimulationView | null): string {
   const n = tree.leavesOf(ex).length;
-  const cls = ["exit", ex === selected ? "selected" : "", n ? "" : "unlinked"].join(" ");
+  const cls = ["exit", ex === selected ? "selected" : "", n ? "" : "unlinked", simClass(sim, sim?.exit === ex, true)].join(" ");
   return (
     `<g class="${cls}" data-id="${ex.id}" transform="translate(${f(p.x)},${f(p.y - NODE_H / 2)})" style="--c:${color}">` +
     `<title>${esc(ex.label)}</title>` +
