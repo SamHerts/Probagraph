@@ -1,5 +1,6 @@
 // Interactive editor for probability trees (growing left to right).
 
+import { loadBackup, storeBackup } from "./autosave";
 import { alertDialog, confirmDialog, dialogOpen, editExit, editNode, promptText } from "./dialogs";
 import { History, type SelectionRef, type Snapshot } from "./history";
 import { NODE_H, NODE_W, layoutTree, type Layout } from "./layout";
@@ -56,9 +57,43 @@ export class App {
     this.bindPanel();
     this.bindKeys();
     void onCloseRequested(() => this.confirmDiscard(), () => this.dirty);
+    const restored = this.restoreBackup();
     this.committed = this.snapshot();
     this.savedText = this.committed.text;
+    if (restored?.dirty) this.savedText = restored.savedText;
+    this.dirty = this.committed.text !== this.savedText;
     this.refresh();
+    if (restored) {
+      this.zoomFit();
+      const name = this.file?.name;
+      this.setStatus(
+        restored.dirty
+          ? `Restored your unsaved changes${name ? ` to “${name}”` : ""} from last time. Save to keep them in a file.`
+          : `Reopened ${name ? `“${name}”` : "your tree"} from last time.`,
+      );
+    }
+  }
+
+  /** Bring back the tree kept from the last visit, if any; null if there is nothing worth restoring. */
+  private restoreBackup(): { dirty: boolean; savedText: string } | null {
+    const backup = loadBackup();
+    if (!backup) return null;
+    try {
+      const tree = parseTree(backup.text);
+      if (tree.root.isLeaf && tree.exits.length === 0 && tree.root.label === "Start") return null; // a blank tree
+      this.tree = tree;
+      this.selected = tree.root;
+      this.file = backup.name ? { name: backup.name } : null;
+      this.counter = [...tree.root.walk()].length - 1;
+      return { dirty: backup.text !== backup.savedText, savedText: backup.savedText };
+    } catch {
+      return null; // damaged backup: start fresh
+    }
+  }
+
+  /** Keep a copy of the tree in local storage (see autosave.ts). */
+  private backup(): void {
+    storeBackup({ text: this.committed.text, savedText: this.savedText, name: this.file?.name ?? null });
   }
 
   // --- drawing -------------------------------------------------------------------
@@ -540,6 +575,7 @@ export class App {
     if (now.text !== this.committed.text) this.history.push(this.committed, label);
     this.committed = now;
     this.dirty = now.text !== this.savedText;
+    this.backup();
     this.refresh();
     this.scrollIntoView(this.selected);
   }
@@ -571,6 +607,7 @@ export class App {
     this.selected = item ?? this.tree.root;
     this.committed = { text: snap.text, sel: this.selectionRef() };
     this.dirty = snap.text !== this.savedText;
+    this.backup();
     this.refresh();
     this.scrollIntoView(this.selected);
   }
@@ -848,6 +885,7 @@ export class App {
     this.history.clear();
     this.committed = this.snapshot();
     this.savedText = this.committed.text;
+    this.backup();
     this.refresh();
     this.zoomFit();
   }
@@ -881,6 +919,7 @@ export class App {
       return false;
     }
     this.dirty = false;
+    this.backup();
     this.updateTitle();
     this.setStatus(`Saved ${this.file.name}.`);
     return true;

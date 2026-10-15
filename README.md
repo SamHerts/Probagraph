@@ -56,7 +56,9 @@ npm run build   # static site in dist
 ```
 
 In the browser, Save writes straight back to the file in Chrome and Edge. Other
-browsers download a copy instead.
+browsers download a copy instead. The open tree is also kept in the browser's local
+storage, so refreshing or closing the tab brings it back next time, including unsaved
+changes. That copy only lives in that browser, so save to a file to keep your work.
 
 ### Desktop app
 
