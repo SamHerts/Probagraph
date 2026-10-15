@@ -7,6 +7,56 @@ Web version: https://samherts.github.io/Probagraph/
 
 ![The Probagraph window with the Mars lander example tree](docs/overview.png)
 
+## Installing
+
+The web version needs no installing. For the desktop app, download the installer for
+your system from the latest release:
+https://github.com/SamHerts/Probagraph/releases/latest
+
+The installers aren't signed with a paid developer certificate, so Windows and macOS
+warn the first time you open them. The steps below get past that.
+
+### Windows
+
+Download `Probagraph_<version>_x64-setup.exe` and run it. If Windows shows "Windows
+protected your PC", click "More info", then "Run anyway". The `.msi` file installs the
+same app, for when an MSI package is needed. Windows 10 and 11 already include the
+WebView2 runtime the app uses; on older systems the installer downloads it.
+
+### macOS
+
+Download `Probagraph_<version>_universal.dmg`, which runs on both Apple Silicon and
+Intel Macs. Open it and drag Probagraph into Applications. The first time you open the
+app, macOS says it can't verify the developer: click "Done", then open System Settings,
+go to Privacy & Security, and click "Open Anyway" next to the message about
+Probagraph. After that it opens normally.
+
+### Linux
+
+There are three packages; use whichever suits your distribution.
+
+On Debian, Ubuntu and similar:
+
+```
+sudo apt install ./Probagraph_<version>_amd64.deb
+```
+
+On Fedora, RHEL and similar:
+
+```
+sudo dnf install ./Probagraph-<version>-1.x86_64.rpm
+```
+
+On any distribution, the AppImage runs without installing:
+
+```
+chmod +x Probagraph_<version>_amd64.AppImage
+./Probagraph_<version>_amd64.AppImage
+```
+
+If the AppImage doesn't start, your system may be missing FUSE 2 (`sudo apt install
+libfuse2` on Ubuntu).
+
 ## How it works
 
 A tree starts from a single entrance node and grows left to right. Each branch has a
@@ -57,7 +107,7 @@ complete.
 - Undo and redo: Ctrl+Z, and Ctrl+Shift+Z or Ctrl+Y (also in the toolbar)
 - Save and open: Ctrl+S and Ctrl+O
 
-## Running it
+## Building from source
 
 Probagraph is written in TypeScript and drawn with SVG. It needs Node.js 20 or newer.
 
@@ -91,10 +141,27 @@ npm run desktop         # run in a window, with live reload
 npm run desktop:build   # installers in src-tauri/target/release/bundle
 ```
 
-Installers can only be built for the system you build on. To build all three, push a
-tag starting with `v` (for example `v0.1.0`): the GitHub Actions workflow in
-`.github/workflows/desktop.yml` builds the Linux, macOS and Windows installers and
-attaches them to a draft release.
+Installers can only be built for the system you build on, so the Linux, macOS and
+Windows ones are built on GitHub instead.
+
+### Building the installers on GitHub
+
+The workflow in `.github/workflows/desktop.yml` builds the installers for all three
+systems. To publish a release, set the new version and push it with its tag:
+
+```
+npm version 0.2.0
+git push --follow-tags
+```
+
+`npm version` updates the version in `package.json` (which the app takes its version
+from), commits it and tags it `v0.2.0`. When the tag arrives, the workflow builds the
+installers and publishes them as a GitHub release, which the download link above
+always points to. It stops if the tag doesn't match the version in `package.json`.
+
+To build the installers without publishing anything, run the "Desktop builds" workflow
+by hand from the Actions tab. The installers are then attached to that workflow run as
+downloads.
 
 ### Publishing the web version
 

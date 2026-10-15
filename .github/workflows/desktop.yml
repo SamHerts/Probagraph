@@ -1,5 +1,9 @@
-# Builds the desktop installers (Linux .deb/.rpm/.AppImage, macOS .dmg, Windows .msi/.exe)
-# and attaches them to a draft GitHub release. Runs when a v* tag is pushed, or by hand.
+# Builds the desktop installers: Linux (.deb, .rpm, .AppImage), macOS (.dmg, Apple Silicon
+# and Intel) and Windows (.exe, .msi).
+#
+# Pushing a version tag (for example v0.2.0) publishes them as a GitHub release; the tag
+# must match the version in package.json. Running the workflow by hand from the Actions
+# tab builds them as downloadable workflow artifacts without making a release.
 name: Desktop builds
 
 on:
@@ -16,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
+          - os: ubuntu-22.04 # the oldest supported Ubuntu, so the AppImage runs on more systems
             args: ""
           - os: windows-latest
             args: ""
@@ -25,6 +29,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: Check the tag matches the app version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the version in package.json ($version)."
+            exit 1
+          fi
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -48,11 +62,14 @@ jobs:
       - run: npm ci
       - run: npm test
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
-          releaseName: Probagraph ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
-          releaseDraft: true
+          # A release is only made for tag pushes; manual runs just upload artifacts.
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: Probagraph ${{ github.ref_name }}
+          releaseBody: "Installers for Linux, macOS and Windows. See the Installing section of the README for how to install each one."
+          releaseDraft: false
+          uploadWorkflowArtifacts: true
           args: ${{ matrix.args }}
