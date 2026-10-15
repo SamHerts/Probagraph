@@ -1,6 +1,6 @@
 // Interactive editor for probability trees (growing left to right).
 
-import { alertDialog, confirmDialog, dialogOpen, editNode, promptText } from "./dialogs";
+import { alertDialog, confirmDialog, dialogOpen, editExit, editNode, promptText } from "./dialogs";
 import { History, type SelectionRef, type Snapshot } from "./history";
 import { NODE_H, NODE_W, layoutTree, type Layout } from "./layout";
 import { ProbabilityTree, Exit, Node, fmtPct, parseTree, serializeTree, simulate } from "./model";
@@ -13,6 +13,9 @@ const MAX_ZOOM = 3;
 const SIM_STEP_MS = 450; // time the simulation spends on each node
 
 type MenuEntry = { label: string; run: () => void; disabled?: boolean; checked?: boolean } | { heading: string } | "sep";
+
+/** The colour an exit gets when none is chosen, from its position in the list. */
+const autoColor = (index: number) => EXIT_PALETTE[index % EXIT_PALETTE.length];
 
 const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
@@ -65,7 +68,7 @@ export class App {
     this.items.clear();
     for (const n of this.tree.root.walk()) this.items.set(n.id, n);
     for (const e of this.tree.exits) this.items.set(e.id, e);
-    this.exitColor = new Map(this.tree.exits.map((e, i) => [e, EXIT_PALETTE[i % EXIT_PALETTE.length]]));
+    this.exitColor = new Map(this.tree.exits.map((e, i) => [e, e.color ?? autoColor(i)]));
     this.draw();
     this.updatePanel();
     this.updateTitle();
@@ -365,7 +368,7 @@ export class App {
     }
     if (item instanceof Exit) {
       return [
-        { label: "Rename exit…", run: () => void this.editSelected() },
+        { label: "Edit exit…", run: () => void this.editSelected() },
         { label: "Delete exit", run: () => void this.deleteSelected() },
       ];
     }
@@ -667,13 +670,15 @@ export class App {
     const item = sel instanceof Link ? sel.leaf : sel; // a connection is edited through its leaf
     if (item !== sel) this.select(item);
     if (item instanceof Exit) {
-      const name = await promptText("Rename exit", "Exit name", item.label, (v) => {
+      const auto = autoColor(this.tree.exits.indexOf(item));
+      const result = await editExit(item, auto, EXIT_PALETTE, (v) => {
         if (v !== item.label && this.tree.findExit(v)) throw new Error(`An exit named “${v}” already exists.`);
       });
-      if (name === null || name === item.label) return;
+      if (result === null) return;
       const old = item.label;
-      item.label = name;
-      this.changed(`rename exit “${old}”`);
+      item.label = result.label;
+      item.color = result.color;
+      this.changed(`edit exit “${old}”`); // records nothing if neither the name nor the colour changed
       return;
     }
     const result = await editNode(item, this.tree.exits, "Edit node");

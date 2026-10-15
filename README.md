@@ -26,6 +26,7 @@ branches don't add up to 100% are outlined in orange.
 - Add a child branch: A or Tab, the toolbar, the right-click menu, or double-click empty space
 - Add a sibling branch: S
 - Edit a label or probability: double-click the node, Enter, or F2
+- Rename an exit or change its color: double-click the exit, Enter, or F2
 - Add an exit: X (if a leaf is selected, it is linked to the new exit)
 - Link a leaf to an exit: drag the leaf onto the exit, use "Send to exit" in the
   right-click menu, or pick or type one in the leaf's edit dialog
@@ -101,5 +102,6 @@ so the file stays flat however deep the tree grows:
 }
 ```
 
-Files saved in the older nested format still open. `examples/mars_lander.json` is a
+An exit with a chosen color is saved as `{"label": "Win", "color": "#16a34a"}` instead
+of just its name. Files saved in the older nested format still open. `examples/mars_lander.json` is a
 worked example.

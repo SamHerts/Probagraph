@@ -8,7 +8,18 @@ export const SUM_TOLERANCE = 1e-9;
 /** A named outcome that any number of leaves can lead into. */
 export class Exit {
   readonly id = nextId++;
-  constructor(public label: string) {}
+  /** `color` is a "#rrggbb" chosen by the user, or null to use the automatic palette. */
+  constructor(
+    public label: string,
+    public color: string | null = null,
+  ) {}
+}
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+/** A "#rrggbb" colour in lower case, or null if `v` isn't one. Colours end up in markup, so nothing else is accepted. */
+export function parseColor(v: unknown): string | null {
+  return typeof v === "string" && HEX_COLOR.test(v) ? v.toLowerCase() : null;
 }
 
 export class Node {
@@ -103,10 +114,18 @@ export interface NodeRecord {
   exit?: string;
 }
 
+/** An exit is saved as just its name, or as an object when it has a chosen colour. */
+export type ExitRecord = string | { label: string; color: string };
+
 export interface TreeRecord {
   version: 3;
-  exits: string[];
+  exits: ExitRecord[];
   nodes: NodeRecord[];
+}
+
+function exitFromRecord(v: unknown): Exit {
+  if (isObject(v)) return new Exit(String(required(v, "label")), parseColor(v.color));
+  return new Exit(String(v));
 }
 
 type Json = Record<string, unknown>;
@@ -182,7 +201,8 @@ export class ProbabilityTree {
       nodes.push(d);
       i++;
     }
-    return { version: 3, exits: this.exits.map((e) => e.label), nodes };
+    const exits = this.exits.map((e): ExitRecord => (e.color ? { label: e.label, color: e.color } : e.label));
+    return { version: 3, exits, nodes };
   }
 
   static fromDict(data: unknown): ProbabilityTree {
@@ -192,7 +212,7 @@ export class ProbabilityTree {
     const rawNodes = data.nodes;
     if (!Array.isArray(rawExits) || !Array.isArray(rawNodes)) throw new Error('"exits" and "nodes" must be lists');
 
-    const exits = rawExits.map((label) => new Exit(String(label)));
+    const exits = rawExits.map(exitFromRecord);
     const byName = new Map(exits.map((e) => [e.label, e]));
 
     const records = rawNodes.map((d) => {
@@ -280,7 +300,9 @@ export function serializeTree(tree: ProbabilityTree): string {
     if (n.exit !== undefined) line += `, "exit": ${JSON.stringify(n.exit)}`;
     return line + "}";
   });
-  const exits = "[" + data.exits.map((e) => JSON.stringify(e)).join(", ") + "]";
+  const exitJson = (e: ExitRecord) =>
+    typeof e === "string" ? JSON.stringify(e) : `{"label": ${JSON.stringify(e.label)}, "color": ${JSON.stringify(e.color)}}`;
+  const exits = "[" + data.exits.map(exitJson).join(", ") + "]";
   return `{\n  "version": ${data.version},\n  "exits": ${exits},\n  "nodes": [\n${lines.join(",\n")}\n  ]\n}\n`;
 }
 

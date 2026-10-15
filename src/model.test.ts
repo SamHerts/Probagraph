@@ -190,3 +190,40 @@ describe("simulate", () => {
     expect(counts.get("A1")! / n).toBeCloseTo(0.125, 1);
   });
 });
+
+describe("exit colours", () => {
+  it("saves a chosen colour and loads it back", () => {
+    const tree = new ProbabilityTree();
+    tree.addExit("Win").color = "#16a34a";
+    tree.addExit("Lose");
+    const text = serializeTree(tree);
+    expect(text).toContain('"exits": [{"label": "Win", "color": "#16a34a"}, "Lose"]');
+    const back = parseTree(text);
+    expect(back.exits.map((e) => [e.label, e.color])).toEqual([
+      ["Win", "#16a34a"],
+      ["Lose", null],
+    ]);
+    expect(serializeTree(back)).toBe(text);
+  });
+
+  it("links leaves to exits that have colours", () => {
+    const tree = ProbabilityTree.fromDict({
+      exits: [{ label: "Win", color: "#ABCDEF" }],
+      nodes: [
+        { id: 0, label: "Start" },
+        { id: 1, parent: 0, label: "A", prob: 1, exit: "Win" },
+      ],
+    });
+    expect(tree.root.children[0].exit).toBe(tree.exits[0]);
+    expect(tree.exits[0].color).toBe("#abcdef");
+  });
+
+  it.each(["red", "#fff", "#12345g", '#000000" onclick="x', 42, null])("ignores the invalid colour %j", (color) => {
+    const tree = ProbabilityTree.fromDict({ exits: [{ label: "Win", color }], nodes: [{ id: 0, label: "Start" }] });
+    expect(tree.exits[0].color).toBeNull();
+  });
+
+  it("rejects an exit object without a label", () => {
+    expect(() => ProbabilityTree.fromDict({ exits: [{ color: "#000000" }], nodes: [{ id: 0, label: "Start" }] })).toThrow(/label/);
+  });
+});
