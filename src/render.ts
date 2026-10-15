@@ -186,12 +186,18 @@ function renderNode(node: Node, p: { x: number; y: number }, selected: Item, exi
     `<rect class="card" width="${NODE_W}" height="${NODE_H}" rx="10"/>`,
   ];
   if (color) parts.push(`<rect class="stripe" x="${NODE_W - 9}" y="8" width="5" height="${NODE_H - 16}" rx="2.5"/>`);
-  parts.push(
-    `<text class="label" x="12" y="21">${esc(clip(node.label, NODE_W - 24 - (color ? 6 : 0), 13, 600))}</text>`,
-    `<text class="reach" x="12" y="39"><tspan class="dim">P(reach) </tspan>${fmtPct(cum)}</text>`,
-    `<rect class="bar-track" x="12" y="${NODE_H - 12}" width="${barW}" height="4" rx="2"/>`,
-    `<rect class="bar" x="12" y="${NODE_H - 12}" width="${f(Math.max(cum * barW, cum > 0 ? 2 : 0))}" height="4" rx="2"/>`,
-  );
+  const label = esc(clip(node.label, NODE_W - 24 - (color ? 6 : 0), 13, 600));
+  if (node.isRoot) {
+    // Every run starts here, so its chance is always 100%: just show the name.
+    parts.push(`<text class="label" x="12" y="${NODE_H / 2}" dominant-baseline="central">${label}</text>`);
+  } else {
+    parts.push(
+      `<text class="label" x="12" y="21">${label}</text>`,
+      `<text class="reach" x="12" y="39"><tspan class="dim">Chance </tspan>${fmtPct(cum)}</text>`,
+      `<rect class="bar-track" x="12" y="${NODE_H - 12}" width="${barW}" height="4" rx="2"/>`,
+      `<rect class="bar" x="12" y="${NODE_H - 12}" width="${f(Math.max(cum * barW, cum > 0 ? 2 : 0))}" height="4" rx="2"/>`,
+    );
+  }
   if (incomplete) {
     parts.push(`<text class="caption warn" x="${NODE_W}" y="${NODE_H + 14}">branches sum to ${fmtPct(node.childrenSum())}</text>`);
   }

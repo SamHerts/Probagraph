@@ -158,7 +158,7 @@ export class App {
     } else if (sel instanceof Link) {
       info = `Connection: ${sel.leaf.label} → ${sel.leaf.exit?.label} | P = ${fmtPct(sel.leaf.cumulative)} | Delete removes it`;
     } else {
-      info = `${sel.pathLabels().join(" → ")} | P(reach) = ${fmtPct(sel.cumulative)}`;
+      info = sel.isRoot ? `${sel.label} (start)` : `${sel.pathLabels().join(" → ")} | Chance = ${fmtPct(sel.cumulative)}`;
       if (!sel.isRoot) info += ` | branch = ${fmtPct(sel.prob)}`;
       if (sel.exit !== null) info += ` | exit = ${sel.exit.label}`;
     }
