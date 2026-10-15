@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "exits": ["Full Success", "Partial Success", "Postponed", "Mission Lost"],
+  "nodes": [
+    {"id": 0, "label": "Launch Day"},
+    {"id": 1, "parent": 0, "label": "Nominal launch", "prob": 0.7},
+    {"id": 2, "parent": 1, "label": "Smooth cruise", "prob": 0.9},
+    {"id": 3, "parent": 2, "label": "Chute deploys", "prob": 0.85},
+    {"id": 4, "parent": 3, "label": "Soft landing", "prob": 0.8, "exit": "Full Success"},
+    {"id": 5, "parent": 3, "label": "Hard landing", "prob": 0.2, "exit": "Partial Success"},
+    {"id": 6, "parent": 2, "label": "Chute fails", "prob": 0.15},
+    {"id": 7, "parent": 6, "label": "Retro-rockets save it", "prob": 0.4, "exit": "Partial Success"},
+    {"id": 8, "parent": 6, "label": "Crash on surface", "prob": 0.6, "exit": "Mission Lost"},
+    {"id": 9, "parent": 1, "label": "Cruise anomaly", "prob": 0.1},
+    {"id": 10, "parent": 9, "label": "Safe-mode recovery", "prob": 0.7, "exit": "Partial Success"},
+    {"id": 11, "parent": 9, "label": "Comms lost", "prob": 0.3, "exit": "Mission Lost"},
+    {"id": 12, "parent": 0, "label": "Weather delay", "prob": 0.2},
+    {"id": 13, "parent": 12, "label": "Launch in window", "prob": 0.6},
+    {"id": 14, "parent": 13, "label": "Clear-sky arrival", "prob": 0.5, "exit": "Full Success"},
+    {"id": 15, "parent": 13, "label": "Dust-storm arrival", "prob": 0.5, "exit": "Partial Success"},
+    {"id": 16, "parent": 12, "label": "Window missed", "prob": 0.4, "exit": "Postponed"},
+    {"id": 17, "parent": 0, "label": "Launch anomaly", "prob": 0.1},
+    {"id": 18, "parent": 17, "label": "Abort, payload saved", "prob": 0.3, "exit": "Postponed"},
+    {"id": 19, "parent": 17, "label": "Vehicle lost", "prob": 0.7, "exit": "Mission Lost"}
+  ]
+}

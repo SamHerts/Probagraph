@@ -1,0 +1,120 @@
+// Small modal dialogs built on <dialog>; each returns a promise of the user's answer.
+
+import { fmtPct, parseProbability, type Exit, type Node } from "./model";
+import { esc } from "./render";
+
+export const NO_EXIT = "(none)";
+
+let openCount = 0;
+
+/** True while any dialog is showing (keyboard shortcuts are ignored then). */
+export function dialogOpen(): boolean {
+  return openCount > 0;
+}
+
+/**
+ * Show a dialog whose form body is `html`. `submit` validates and returns the result,
+ * or throws an Error whose message is shown; cancelling resolves to null.
+ */
+function showDialog<T>(title: string, html: string, submit: (form: HTMLFormElement, button: string) => T, buttons: [string, string][] = [["cancel", "Cancel"], ["ok", "OK"]]): Promise<T | null> {
+  const dlg = document.createElement("dialog");
+  dlg.innerHTML =
+    `<form method="dialog"><h2>${esc(title)}</h2>${html}<p class="error" role="alert"></p>` +
+    `<div class="buttons">${buttons
+      .map(([value, text], i) => `<button value="${value}" class="${i === buttons.length - 1 ? "primary" : ""}"${value === "cancel" ? ' formnovalidate type="button" data-cancel' : ""}>${esc(text)}</button>`)
+      .join("")}</div></form>`;
+  document.body.append(dlg);
+  openCount++;
+  const form = dlg.querySelector("form")!;
+  const error = dlg.querySelector<HTMLElement>(".error")!;
+
+  return new Promise<T | null>((resolve) => {
+    const finish = (value: T | null) => {
+      openCount--;
+      dlg.close();
+      dlg.remove();
+      resolve(value);
+    };
+    dlg.querySelector("[data-cancel]")?.addEventListener("click", () => finish(null));
+    dlg.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      finish(null);
+    });
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const button = (e.submitter as HTMLButtonElement | null)?.value ?? "ok";
+      try {
+        finish(submit(form, button));
+      } catch (err) {
+        error.textContent = (err as Error).message;
+      }
+    });
+    dlg.showModal();
+    const first = dlg.querySelector<HTMLInputElement>("[autofocus]") ?? dlg.querySelector<HTMLElement>("button.primary");
+    first?.focus();
+    if (first instanceof HTMLInputElement) first.select();
+  });
+}
+
+export interface NodeEdit {
+  label: string;
+  prob: number;
+  exitName: string | null;
+}
+
+/** Edit a node's label, branch probability and (for leaves) exit. */
+export function editNode(node: Node, exits: Exit[], title: string): Promise<NodeEdit | null> {
+  let hint: string;
+  if (node.isRoot) {
+    hint = "The entrance node is always reached (100%).";
+  } else {
+    const others = node.parent!.children.filter((c) => c !== node).reduce((s, c) => s + c.prob, 0);
+    hint = `Percent (25 or 25%) or fraction (1/4). Siblings already use ${fmtPct(others)}; remaining: ${fmtPct(Math.max(0, 1 - others))}.`;
+  }
+  const pct = fmtPct(node.prob).replace(/%$/, "");
+  let html =
+    `<label>Label<input name="label" value="${esc(node.label)}" ${node.isRoot ? "autofocus" : ""} required></label>` +
+    `<label>Probability<input name="prob" value="${node.isRoot ? "100" : esc(pct)}" ${node.isRoot ? "disabled" : "autofocus"} inputmode="decimal"></label>` +
+    `<p class="hint">${esc(hint)}</p>`;
+  if (node.isLeaf) {
+    html +=
+      `<label>Exit<input name="exit" list="exit-options" value="${esc(node.exit?.label ?? "")}" placeholder="${NO_EXIT}"></label>` +
+      `<datalist id="exit-options">${exits.map((e) => `<option value="${esc(e.label)}">`).join("")}</datalist>` +
+      `<p class="hint">Pick an exit, type a new name to create one, or leave empty for none.</p>`;
+  }
+  return showDialog(title, html, (form) => {
+    const data = new FormData(form);
+    const label = String(data.get("label") ?? "").trim();
+    if (!label) throw new Error("Label cannot be empty.");
+    let prob = 1;
+    if (!node.isRoot) {
+      try {
+        prob = parseProbability(String(data.get("prob") ?? ""));
+      } catch (err) {
+        throw new Error(`Invalid probability: ${(err as Error).message}`);
+      }
+    }
+    const exitName = String(data.get("exit") ?? "").trim();
+    return { label, prob, exitName: exitName === "" || exitName === NO_EXIT ? null : exitName };
+  });
+}
+
+/** Ask for a line of text; `validate` may throw to reject it. */
+export function promptText(title: string, message: string, initial: string, validate: (value: string) => void = () => {}): Promise<string | null> {
+  const html = `<label>${esc(message)}<input name="value" value="${esc(initial)}" autofocus required></label>`;
+  return showDialog(title, html, (form) => {
+    const value = String(new FormData(form).get("value") ?? "").trim();
+    if (!value) throw new Error("Name cannot be empty.");
+    validate(value);
+    return value;
+  });
+}
+
+/** Ask a question; resolves to the value of the button pressed, or null if cancelled. */
+export function confirmDialog(title: string, message: string, buttons: [string, string][]): Promise<string | null> {
+  return showDialog(title, `<p>${esc(message)}</p>`, (_form, button) => button, buttons);
+}
+
+export function alertDialog(title: string, message: string): Promise<unknown> {
+  return confirmDialog(title, message, [["ok", "OK"]]);
+}

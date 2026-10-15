@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Build probability trees and see the chance of every outcome." />
+    <title>Probagraph</title>
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="brand"><img src="./icon.svg" alt="" width="22" height="22" />Probagraph</div>
+      <div class="group">
+        <button data-action="new" title="New tree (Ctrl+N)">New</button>
+        <button data-action="open" title="Open a saved tree (Ctrl+O)">Open…</button>
+        <button data-action="save" title="Save (Ctrl+S)">Save</button>
+        <button data-action="saveAs" title="Save as (Ctrl+Shift+S)">Save as…</button>
+        <button data-action="example" title="Open the Mars lander example">Example</button>
+      </div>
+      <div class="group">
+        <button data-action="undo" title="Nothing to undo" disabled>Undo</button>
+        <button data-action="redo" title="Nothing to redo" disabled>Redo</button>
+      </div>
+      <div class="group">
+        <button data-action="addChild" title="Add a child branch (A or Tab)">+ Child</button>
+        <button data-action="addSibling" title="Add a sibling branch (S)">+ Sibling</button>
+        <button data-action="addExit" title="Add an exit; a selected leaf is linked to it (X)">+ Exit</button>
+        <button data-action="edit" title="Edit the selection (Enter or F2)">Edit</button>
+        <button data-action="delete" title="Delete the selection (Del)">Delete</button>
+      </div>
+      <div class="group">
+        <button data-action="split" title="Give the children equal probabilities">Split evenly</button>
+        <button data-action="normalize" title="Scale the children so they add up to 100%">Normalize</button>
+      </div>
+      <div class="group zoom">
+        <button data-action="zoomOut" title="Zoom out (Ctrl −)" aria-label="Zoom out">−</button>
+        <button data-action="zoomReset" id="zoom-level" title="Reset zoom (Ctrl 0)">100%</button>
+        <button data-action="zoomIn" title="Zoom in (Ctrl +)" aria-label="Zoom in">+</button>
+        <button data-action="fit" title="Fit the tree to the window (F)">Fit</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="canvas" id="canvas">
+        <svg id="svg" aria-label="Probability tree">
+          <g id="viewport"><g id="scene"></g><g id="overlay"></g></g>
+        </svg>
+      </div>
+      <div class="splitter" id="splitter" role="separator" aria-orientation="vertical"></div>
+      <aside class="panel">
+        <section>
+          <h2>Exits</h2>
+          <div class="dist" id="dist"></div>
+          <table>
+            <thead><tr><th>Exit</th><th class="num">Paths</th><th class="num">Chance</th></tr></thead>
+            <tbody id="exit-rows"></tbody>
+          </table>
+          <p class="muted" id="exit-total"></p>
+        </section>
+        <section class="grow">
+          <h2>Leaf outcomes</h2>
+          <div class="scroll">
+            <table>
+              <thead><tr><th>Path</th><th>Exit</th><th class="num">Chance</th></tr></thead>
+              <tbody id="leaf-rows"></tbody>
+            </table>
+          </div>
+          <p class="total" id="leaf-total"></p>
+          <div class="warnings" id="warnings"></div>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <span id="status"></span>
+      <span class="hints">Ctrl+Z undo · A child · S sibling · X exit · Enter edit · Del delete (also a selected connection) · drag a leaf onto an exit · Ctrl+wheel zoom · F fit</span>
+    </footer>
+
+    <div class="menu" id="menu" role="menu" hidden></div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
