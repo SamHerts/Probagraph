@@ -5,6 +5,8 @@ outcome. It runs in the browser and as a desktop app on Linux, macOS and Windows
 
 Web version: https://samherts.github.io/Probagraph/
 
+![The Probagraph window with the Mars lander example tree](docs/overview.png)
+
 ## How it works
 
 A tree starts from a single entrance node and grows left to right. Each branch has a
@@ -15,6 +17,17 @@ their total.
 Exits are named outcomes, such as "Success" or "Mission lost", that several leaves
 can lead into. Each exit shows the combined probability of every path that ends in
 it. Only leaves can lead to an exit, so adding a branch to a linked leaf unlinks it.
+
+![Leaves connected to their exits, with the Partial Success exit selected](docs/connections.png)
+
+Each node shows its chance below its name, and the yellow label on the line into it is
+the branch probability. Selecting an exit highlights the connections that lead into it.
+
+Simulate runs a single event: starting at the entrance node, it takes each branch at
+random according to its probability, and highlights the path it took and the exit it
+reached.
+
+![A simulated run through the tree ending at the Mission Lost exit](docs/simulate.png)
 
 Probabilities can be entered as percentages (25 or 25%) or fractions (1/4). A new
 branch defaults to whatever probability its siblings haven't used yet. Nodes whose
