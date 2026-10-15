@@ -2,8 +2,18 @@
 
 let nextId = 1;
 
-// Siblings whose probabilities sum within this tolerance of 1 are considered complete.
-export const SUM_TOLERANCE = 1e-9;
+// Probabilities are shown to 4 decimal places of a percent (0.0001% = 1e-6). Siblings
+// whose sum would display as 100% are considered complete.
+export const SUM_TOLERANCE = 5e-7;
+
+// Probabilities are stored to 12 decimal places: far finer than anything shown, but
+// enough to drop floating-point noise like 0.30000000000000004 and stop it accumulating.
+const PROB_DECIMALS = 1e12;
+
+/** Clamp a probability into [0, 1] and round it to the stored precision. */
+export function roundProb(p: number): number {
+  return Math.round(Math.min(1, Math.max(0, p)) * PROB_DECIMALS) / PROB_DECIMALS;
+}
 
 /** A named outcome that any number of leaves can lead into. */
 export class Exit {
@@ -59,7 +69,8 @@ export class Node {
 
   /** Probability mass not yet assigned to children. */
   remaining(): number {
-    return Math.max(0, 1 - this.childrenSum());
+    const r = roundProb(1 - this.childrenSum());
+    return r <= SUM_TOLERANCE ? 0 : r;
   }
 
   addChild(label: string, prob: number): Node {
@@ -81,7 +92,12 @@ export class Node {
   normalizeChildren(): void {
     if (this.isLeaf) return;
     const total = this.childrenSum();
-    for (const c of this.children) c.prob = total > 0 ? c.prob / total : 1 / this.children.length;
+    for (const c of this.children) c.prob = roundProb(total > 0 ? c.prob / total : 1 / this.children.length);
+  }
+
+  /** Give every child the same probability. */
+  splitChildrenEvenly(): void {
+    for (const c of this.children) c.prob = roundProb(1 / this.children.length);
   }
 
   *walk(): Generator<Node> {
@@ -138,9 +154,12 @@ function toInt(v: unknown, what: string): number {
 
 function toFloat(v: unknown, what: string): number {
   const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
-  if (typeof n !== "number" || Number.isNaN(n)) throw new Error(`invalid ${what}: ${JSON.stringify(v)}`);
+  if (typeof n !== "number" || !Number.isFinite(n)) throw new Error(`invalid ${what}: ${JSON.stringify(v)}`);
   return n;
 }
+
+/** A probability read from a file: must be a number; clamped and rounded like any other. */
+const toProb = (v: unknown) => roundProb(toFloat(v, "probability"));
 
 function required(d: Json, key: string): unknown {
   if (!(key in d)) throw new Error(`missing "${key}" in ${JSON.stringify(d)}`);
@@ -223,7 +242,7 @@ export class ProbabilityTree {
     for (const d of records) {
       const nid = toInt(required(d, "id"), "node id");
       if (nodes.has(nid)) throw new Error(`duplicate node id ${nid}`);
-      nodes.set(nid, new Node(String(required(d, "label")), "prob" in d ? toFloat(d.prob, "probability") : 1));
+      nodes.set(nid, new Node(String(required(d, "label")), "prob" in d ? toProb(d.prob) : 1));
     }
 
     const roots: Node[] = [];
@@ -266,7 +285,7 @@ export class ProbabilityTree {
 
     const build = (d: unknown, parent: Node | null): Node => {
       if (!isObject(d)) throw new Error(`invalid node entry: ${JSON.stringify(d)}`);
-      const node = new Node(String(required(d, "label")), "prob" in d ? toFloat(d.prob, "probability") : 1);
+      const node = new Node(String(required(d, "label")), "prob" in d ? toProb(d.prob) : 1);
       node.parent = parent;
       node.children = ((d.children ?? []) as unknown[]).map((c) => build(c, node));
       if ("exit" in d && node.isLeaf) {
@@ -334,7 +353,7 @@ export function parseProbability(text: string): number {
     value = parseFloatStrict(s) / 100;
   }
   if (!(value >= 0 && value <= 1)) throw new Error("probability must be between 0% and 100%");
-  return value;
+  return roundProb(value);
 }
 
 /** Format a probability as a percentage with up to 4 decimals, trailing zeros trimmed. */

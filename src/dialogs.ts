@@ -97,7 +97,9 @@ export function editNode(node: Node, exits: Exit[], title: string): Promise<Node
     let prob = 1;
     if (!node.isRoot) {
       try {
-        prob = parseProbability(String(data.get("prob") ?? ""));
+        // Left as shown: keep the exact value instead of re-reading its rounded display.
+        const text = String(data.get("prob") ?? "");
+        prob = text.trim() === pct ? node.prob : parseProbability(text);
       } catch (err) {
         throw new Error(`Invalid probability: ${(err as Error).message}`);
       }

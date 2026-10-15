@@ -18,7 +18,9 @@ it. Only leaves can lead to an exit, so adding a branch to a linked leaf unlinks
 
 Probabilities can be entered as percentages (25 or 25%) or fractions (1/4). A new
 branch defaults to whatever probability its siblings haven't used yet. Nodes whose
-branches don't add up to 100% are outlined in orange.
+branches don't add up to 100% are outlined in orange. Probabilities are kept to 12
+decimal places and shown to 4 (of a percent); a sum that shows as 100% counts as
+complete.
 
 ## Controls
 

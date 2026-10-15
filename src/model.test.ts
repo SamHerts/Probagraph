@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { ProbabilityTree, Node, fmtPct, parseProbability, parseTree, serializeTree, simulate } from "./model";
+import { ProbabilityTree, Node, fmtPct, parseProbability, parseTree, roundProb, serializeTree, simulate } from "./model";
 
 const repoFile = (name: string) => readFileSync(fileURLToPath(new URL(`../${name}`, import.meta.url)), "utf8");
 
@@ -225,5 +225,60 @@ describe("exit colours", () => {
 
   it("rejects an exit object without a label", () => {
     expect(() => ProbabilityTree.fromDict({ exits: [{ color: "#000000" }], nodes: [{ id: 0, label: "Start" }] })).toThrow(/label/);
+  });
+});
+
+describe("probability precision", () => {
+  it("drops floating-point noise", () => {
+    expect(roundProb(0.1 + 0.2)).toBe(0.3);
+    expect(parseProbability("1/3")).toBe(0.333333333333);
+    expect(roundProb(1.5)).toBe(1);
+    expect(roundProb(-0.2)).toBe(0);
+  });
+
+  it("treats sums that display as 100% as complete", () => {
+    const root = new Node("Start");
+    for (let i = 0; i < 3; i++) root.addChild("Third", parseProbability("1/3"));
+    expect(root.childrenComplete()).toBe(true);
+    expect(root.remaining()).toBe(0);
+    expect(fmtPct(root.childrenSum())).toBe("100%");
+
+    const short = new Node("Start");
+    short.addChild("A", parseProbability("99.9998"));
+    expect(short.childrenComplete()).toBe(false);
+  });
+
+  it("splits and normalizes to stored precision", () => {
+    const root = new Node("Start");
+    for (let i = 0; i < 7; i++) root.addChild("Seventh", 0.1);
+    root.splitChildrenEvenly();
+    expect(root.children[0].prob).toBe(0.142857142857);
+    expect(root.childrenComplete()).toBe(true);
+    root.children[0].prob = 0.5;
+    root.normalizeChildren();
+    expect(root.childrenComplete()).toBe(true);
+    for (const c of root.children) expect(c.prob).toBe(roundProb(c.prob));
+  });
+
+  it("cleans up long probabilities when loading", () => {
+    const tree = ProbabilityTree.fromDict({
+      nodes: [
+        { id: 0, label: "Start" },
+        { id: 1, parent: 0, label: "Left", prob: 0.3333335555557037 },
+        { id: 2, parent: 0, label: "Right", prob: 0.6666664444442963 },
+      ],
+    });
+    expect(tree.root.children.map((c) => c.prob)).toEqual([0.333333555556, 0.666666444444]);
+    expect(tree.root.childrenComplete()).toBe(true);
+    expect(serializeTree(tree)).toContain('"prob": 0.333333555556}');
+  });
+
+  it.each([1.5, -0.2])("clamps the out-of-range probability %d when loading", (prob) => {
+    const tree = ProbabilityTree.fromDict({ nodes: [{ id: 0, label: "Start" }, { id: 1, parent: 0, label: "A", prob }] });
+    expect(tree.root.children[0].prob).toBe(prob > 1 ? 1 : 0);
+  });
+
+  it("rejects non-numeric probabilities when loading", () => {
+    expect(() => ProbabilityTree.fromDict({ nodes: [{ id: 0, label: "Start" }, { id: 1, parent: 0, label: "A", prob: "lots" }] })).toThrow(/probability/);
   });
 });

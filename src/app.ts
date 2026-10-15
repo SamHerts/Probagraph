@@ -734,7 +734,7 @@ export class App {
   splitEvenly(): void {
     const target = this.targetForChildrenOp();
     if (!target) return;
-    for (const c of target.children) c.prob = 1 / target.children.length;
+    target.splitChildrenEvenly();
     this.changed(`split “${target.label}” evenly`);
   }
 
