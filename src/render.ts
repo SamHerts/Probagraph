@@ -2,7 +2,7 @@
 // which is plenty fast for trees of a few hundred nodes and keeps the code simple.
 
 import { NODE_H, NODE_W, type Layout } from "./layout";
-import { Exit, fmtPct, type ProbabilityTree, type Node } from "./model";
+import { Exit, fmtPct, type Analysis, type ProbabilityTree, type Node } from "./model";
 
 // One colour per exit (cycled if there are more exits than colours); mid-tones that
 // read on both the light and the dark theme.
@@ -10,7 +10,10 @@ export const EXIT_PALETTE = ["#8b5cf6", "#16a34a", "#e11d48", "#2563eb", "#d9770
 
 export const FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, sans-serif';
 
-/** The connection from a leaf to its exit (a leaf has at most one, so the leaf identifies it). */
+/**
+ * A leaf's outgoing connection: to its exit, or to the node it continues at. A leaf has
+ * at most one, so the leaf identifies it.
+ */
 export class Link {
   constructor(readonly leaf: Node) {}
 }
@@ -23,15 +26,18 @@ export function sameItem(a: Item | null, b: Item | null): boolean {
   return a === b;
 }
 
-/** A simulated run being shown: the nodes it has reached so far, and its exit once it gets there. */
+/** A simulated run being shown: what it has reached so far, and its exit once it gets there. */
 export interface SimulationView {
   path: Set<Node>;
+  edges: Set<Node>; // nodes the run entered along their own branch
+  jumps: Set<Node>; // leaves whose continue link the run followed
   current: Node; // the node the run has just reached
   exit: Exit | null; // set once the run reaches a linked leaf
 }
 
 export interface Scene {
   tree: ProbabilityTree;
+  analysis: Analysis;
   layout: Layout;
   selected: Item;
   exitColor: Map<Exit, string>;
@@ -87,7 +93,8 @@ export function focusExit(selected: Item): Exit | null {
 }
 
 export function renderScene(s: Scene): string {
-  const { tree, layout, selected, exitColor, sim } = s;
+  const { tree, analysis, layout, selected, exitColor, sim } = s;
+  const chance = analysis.chance;
   const pos = layout.pos;
   const focus = focusExit(selected);
   const out: string[] = [];
@@ -138,8 +145,8 @@ export function renderScene(s: Scene): string {
       const c = pos.get(child)!;
       const x0 = p.x + NODE_W;
       const mx = (x0 + c.x) / 2;
-      const w = 1.5 + 3.5 * child.cumulative;
-      out.push(`<path class="edge${sim?.path.has(child) ? " sim" : ""}" d="M${f(x0)},${f(p.y)}C${f(mx)},${f(p.y)} ${f(mx)},${f(c.y)} ${f(c.x)},${f(c.y)}" stroke-width="${f(w)}"/>`);
+      const w = 1.5 + 3.5 * chance.get(node)! * child.prob; // the chance flowing along this branch
+      out.push(`<path class="edge${sim?.edges.has(child) ? " sim" : ""}" d="M${f(x0)},${f(p.y)}C${f(mx)},${f(p.y)} ${f(mx)},${f(c.y)} ${f(c.x)},${f(c.y)}" stroke-width="${f(w)}"/>`);
     }
   }
   for (const node of tree.root.walk()) {
@@ -150,16 +157,41 @@ export function renderScene(s: Scene): string {
       const right = c.x - 6;
       const top = c.y - 6 - 18;
       out.push(
-        `<g class="pill${sim?.path.has(child) ? " sim" : ""}" data-id="${child.id}"><rect x="${f(right - pw)}" y="${f(top)}" width="${f(pw)}" height="18" rx="9"/>` +
+        `<g class="pill${sim?.edges.has(child) ? " sim" : ""}" data-id="${child.id}"><rect x="${f(right - pw)}" y="${f(top)}" width="${f(pw)}" height="18" rx="9"/>` +
           `<text x="${f(right - pw / 2)}" y="${f(top + 9)}">${esc(label)}</text></g>`,
       );
     }
   }
   out.push("</g>");
 
+  // Continue links: dashed arrows from a leaf to the node it continues at.
+  out.push('<g class="jumps">');
+  for (const leaf of tree.root.leaves()) {
+    const target = leaf.next;
+    if (!target) continue;
+    const lp = pos.get(leaf)!;
+    const tp = pos.get(target)!;
+    const isSelected = selected instanceof Link && selected.leaf === leaf;
+    const strong = isSelected || selected === leaf || selected === target;
+    const head = strong ? 12 : 10;
+    const x0 = lp.x + NODE_W;
+    const x1 = tp.x - head + 1;
+    const mx = (x0 + x1) / 2;
+    const d = `M${f(x0)},${f(lp.y)}C${f(mx)},${f(lp.y)} ${f(mx)},${f(tp.y)} ${f(x1)},${f(tp.y)}`;
+    const cls = ["jump", isSelected ? "selected" : "", strong ? "strong" : "", sim?.jumps.has(leaf) ? "sim" : ""].join(" ");
+    out.push(
+      `<g class="${cls}" data-link="${leaf.id}">` +
+        `<title>${esc(leaf.label)} continues at ${esc(target.label)}</title>` +
+        `<path class="hit" d="${d}"/>` +
+        `<path class="wire" d="${d}" stroke-width="${f(strong ? 3 : 1.5 + 2 * chance.get(leaf)!)}"/>` +
+        `<path class="head" d="${arrowHead(tp.x, tp.y, head)}"/></g>`,
+    );
+  }
+  out.push("</g>");
+
   out.push('<g class="nodes">');
-  for (const node of tree.root.walk()) out.push(renderNode(node, pos.get(node)!, selected, exitColor, sim));
-  for (const ex of tree.exits) out.push(renderExit(tree, ex, pos.get(ex)!, selected, exitColor.get(ex)!, sim));
+  for (const node of tree.root.walk()) out.push(renderNode(node, pos.get(node)!, selected, exitColor, sim, analysis));
+  for (const ex of tree.exits) out.push(renderExit(tree, ex, pos.get(ex)!, selected, exitColor.get(ex)!, sim, chance));
   out.push("</g>");
   return out.join("");
 }
@@ -170,22 +202,32 @@ function simClass(sim: SimulationView | null, onPath: boolean, isNow: boolean): 
   return isNow ? "sim sim-now" : "sim";
 }
 
-function renderNode(node: Node, p: { x: number; y: number }, selected: Item, exitColor: Map<Exit, string>, sim: SimulationView | null): string {
-  const kind = node.isRoot ? "root" : node.isLeaf ? "leaf" : "inner";
+function renderNode(
+  node: Node,
+  p: { x: number; y: number },
+  selected: Item,
+  exitColor: Map<Exit, string>,
+  sim: SimulationView | null,
+  analysis: Analysis,
+): string {
+  // Only leaves where runs end are coloured as outcomes; a leaf that continues elsewhere isn't one.
+  const kind = node.isRoot ? "root" : node.isOutcome ? "leaf" : "inner";
   const incomplete = !node.childrenComplete();
   const onPath = sim?.path.has(node) ?? false;
   const isNow = sim?.current === node && sim.exit === null;
   const cls = ["node", kind, node === selected ? "selected" : "", incomplete ? "incomplete" : "", simClass(sim, onPath, isNow)].join(" ");
-  const cum = node.cumulative;
+  const cum = analysis.chance.get(node)!;
+  const from = analysis.incoming.get(node)!;
   const color = node.exit !== null && node.isLeaf ? exitColor.get(node.exit)! : null;
   const barW = NODE_W - 24 - (color ? 6 : 0);
   const parts = [
     `<g class="${cls}" data-id="${node.id}" transform="translate(${f(p.x)},${f(p.y - NODE_H / 2)})"${color ? ` style="--c:${color}"` : ""}>`,
-    `<title>${esc(node.pathLabels().join(" → "))}</title>`,
+    `<title>${esc(node.pathLabels().join(" → "))}${from.length ? esc(`\nAlso reached from: ${from.map((n) => n.label).join(", ")}`) : ""}</title>`,
     `<rect class="halo" x="-5" y="-5" width="${NODE_W + 10}" height="${NODE_H + 10}" rx="15"/>`,
     `<rect class="card" width="${NODE_W}" height="${NODE_H}" rx="10"/>`,
   ];
   if (color) parts.push(`<rect class="stripe" x="${NODE_W - 9}" y="8" width="5" height="${NODE_H - 16}" rx="2.5"/>`);
+  else if (node.next) parts.push(`<rect class="stripe jump-stripe" x="${NODE_W - 9}" y="8" width="5" height="${NODE_H - 16}" rx="2.5"/>`);
   const label = esc(clip(node.label, NODE_W - 24 - (color ? 6 : 0), 13, 600));
   if (node.isRoot) {
     // Every run starts here, so its chance is always 100%: just show the name.
@@ -201,11 +243,23 @@ function renderNode(node: Node, p: { x: number; y: number }, selected: Item, exi
   if (incomplete) {
     parts.push(`<text class="caption warn" x="${NODE_W}" y="${NODE_H + 14}">branches sum to ${fmtPct(node.childrenSum())}</text>`);
   }
+  if (from.length) {
+    const routes = analysis.routes.get(node)!;
+    parts.push(`<text class="caption routes" x="0" y="${NODE_H + 14}">${routes} routes in</text>`);
+  }
   parts.push("</g>");
   return parts.join("");
 }
 
-function renderExit(tree: ProbabilityTree, ex: Exit, p: { x: number; y: number }, selected: Item, color: string, sim: SimulationView | null): string {
+function renderExit(
+  tree: ProbabilityTree,
+  ex: Exit,
+  p: { x: number; y: number },
+  selected: Item,
+  color: string,
+  sim: SimulationView | null,
+  chance: Map<Node, number>,
+): string {
   const n = tree.leavesOf(ex).length;
   const cls = ["exit", ex === selected ? "selected" : "", n ? "" : "unlinked", simClass(sim, sim?.exit === ex, true)].join(" ");
   return (
@@ -216,7 +270,7 @@ function renderExit(tree: ProbabilityTree, ex: Exit, p: { x: number; y: number }
     `<rect class="tint" width="${NODE_W}" height="${NODE_H}" rx="${NODE_H / 2}"/>` +
     `<circle class="dot" cx="22" cy="${NODE_H / 2}" r="6"/>` +
     `<text class="label" x="36" y="23">${esc(clip(ex.label, NODE_W - 36 - 18, 13, 600))}</text>` +
-    `<text class="prob" x="36" y="43">${fmtPct(tree.exitProbability(ex))}</text>` +
+    `<text class="prob" x="36" y="43">${fmtPct(tree.exitProbability(ex, chance))}</text>` +
     `<text class="caption" x="${NODE_W - 8}" y="${NODE_H + 14}">${n} path${n === 1 ? "" : "s"}</text>` +
     "</g>"
   );

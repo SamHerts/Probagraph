@@ -4,7 +4,7 @@ import { loadBackup, storeBackup } from "./autosave";
 import { alertDialog, confirmDialog, dialogOpen, editExit, editNode, promptText } from "./dialogs";
 import { History, type SelectionRef, type Snapshot } from "./history";
 import { NODE_H, NODE_W, layoutTree, type Layout } from "./layout";
-import { ProbabilityTree, Exit, Node, fmtPct, parseTree, serializeTree, simulate } from "./model";
+import { ProbabilityTree, Exit, Node, fmtPct, parseTree, serializeTree, simulate, type Analysis } from "./model";
 import { openFile, saveFile, setWindowTitle, onCloseRequested, type FileRef } from "./platform";
 import { EXIT_PALETTE, Link, esc, renderDragLine, renderScene, sameItem, type Item, type SimulationView } from "./render";
 import exampleTree from "../examples/mars_lander.json?raw";
@@ -24,6 +24,7 @@ export class App {
   tree = new ProbabilityTree();
   selected: Item = this.tree.root;
   layout!: Layout;
+  analysis!: Analysis; // chances, routes and columns, worked out on every refresh
   items = new Map<number, Item>();
   exitColor = new Map<Exit, string>();
   file: FileRef | null = null;
@@ -50,6 +51,7 @@ export class App {
   private lastClick: { t: number; x: number; y: number; item: Item | null } | null = null;
   private pointers = new Map<number, { x: number; y: number }>(); // for two-finger pinch zoom
   private pinch: { d: number; x: number; y: number } | null = null;
+  private pickFor: Node | null = null; // a leaf waiting for the user to click the node it continues at
 
   constructor() {
     this.bindToolbar();
@@ -99,7 +101,8 @@ export class App {
   // --- drawing -------------------------------------------------------------------
 
   refresh(): void {
-    this.layout = layoutTree(this.tree);
+    this.analysis = this.tree.analyze();
+    this.layout = layoutTree(this.tree, this.analysis);
     this.items.clear();
     for (const n of this.tree.root.walk()) this.items.set(n.id, n);
     for (const e of this.tree.exits) this.items.set(e.id, e);
@@ -121,7 +124,14 @@ export class App {
   }
 
   private draw(): void {
-    this.scene.innerHTML = renderScene({ tree: this.tree, layout: this.layout, selected: this.selected, exitColor: this.exitColor, sim: this.sim });
+    this.scene.innerHTML = renderScene({
+      tree: this.tree,
+      analysis: this.analysis,
+      layout: this.layout,
+      selected: this.selected,
+      exitColor: this.exitColor,
+      sim: this.sim,
+    });
     this.svg.classList.toggle("simulating", this.sim !== null);
   }
 
@@ -140,12 +150,13 @@ export class App {
     const tree = this.tree;
     const sel = this.selected;
     const selLeaf = sel instanceof Link ? sel.leaf : sel;
+    const { chance, routes } = this.analysis;
     const unassigned = tree.unassignedLeaves();
-    const unassignedP = unassigned.reduce((s, n) => s + n.cumulative, 0);
+    const unassignedP = unassigned.reduce((s, n) => s + chance.get(n)!, 0);
 
     // Stacked bar: how the total probability splits between the exits.
     const segments = tree.exits.map((e) => {
-      const p = tree.exitProbability(e);
+      const p = tree.exitProbability(e, chance);
       return `<span style="flex-grow:${p};background:${this.exitColor.get(e)}" title="${esc(e.label)}: ${fmtPct(p)}"></span>`;
     });
     if (unassignedP > 0) segments.push(`<span class="none" style="flex-grow:${unassignedP}" title="No exit: ${fmtPct(unassignedP)}"></span>`);
@@ -153,7 +164,7 @@ export class App {
 
     $("#exit-rows").innerHTML = tree.exits
       .map((e) => {
-        const p = tree.exitProbability(e);
+        const p = tree.exitProbability(e, chance);
         return (
           `<tr data-id="${e.id}"${e === sel ? ' class="selected"' : ""}>` +
           `<td><span class="swatch" style="background:${this.exitColor.get(e)}"></span>${esc(e.label)}</td>` +
@@ -161,24 +172,27 @@ export class App {
         );
       })
       .join("");
-    const exitsTotal = tree.exits.reduce((s, e) => s + tree.exitProbability(e), 0);
+    const exitsTotal = tree.exits.reduce((s, e) => s + tree.exitProbability(e, chance), 0);
     $("#exit-total").textContent = tree.exits.length
       ? `All exits: ${fmtPct(exitsTotal)} · no exit: ${fmtPct(unassignedP)} (${unassigned.length} ${unassigned.length === 1 ? "leaf" : "leaves"})`
       : "No exits yet: press X (or + Exit) to create one.";
 
-    const leaves = tree.root.leaves();
+    // Only leaves where runs end; leaves that continue elsewhere pass their chance on.
+    const leaves = tree.outcomes();
     $("#leaf-rows").innerHTML = leaves
       .map((leaf) => {
         const ex = leaf.exit;
         const chip = ex ? `<span class="chip" style="--c:${this.exitColor.get(ex)}">${esc(ex.label)}</span>` : "";
+        const n = routes.get(leaf)!;
+        const more = n > 1 ? ` <span class="routes">(1 of ${n} routes)</span>` : "";
         return (
           `<tr data-id="${leaf.id}"${leaf === selLeaf ? ' class="selected"' : ""}>` +
-          `<td class="path"><div>${esc(leaf.label)}</div><div class="crumbs">${leaf.pathLabels().slice(0, -1).map(esc).join(" → ")}</div></td>` +
-          `<td>${chip}</td><td class="num">${fmtPct(leaf.cumulative)}</td></tr>`
+          `<td class="path"><div>${esc(leaf.label)}</div><div class="crumbs">${leaf.pathLabels().slice(0, -1).map(esc).join(" → ")}${more}</div></td>` +
+          `<td>${chip}</td><td class="num">${fmtPct(chance.get(leaf)!)}</td></tr>`
         );
       })
       .join("");
-    const total = leaves.reduce((s, n) => s + n.cumulative, 0);
+    const total = leaves.reduce((s, n) => s + chance.get(n)!, 0);
     $("#leaf-total").textContent = `${leaves.length} ${leaves.length === 1 ? "leaf" : "leaves"}, total = ${fmtPct(total)}`;
     document.querySelector("#leaf-rows tr.selected, #exit-rows tr.selected")?.scrollIntoView({ block: "nearest" });
 
@@ -192,13 +206,16 @@ export class App {
     let info: string;
     if (sel instanceof Exit) {
       const n = tree.leavesOf(sel).length;
-      info = `Exit: ${sel.label} | combined P = ${fmtPct(tree.exitProbability(sel))} from ${n} path${n === 1 ? "" : "s"}`;
+      info = `Exit: ${sel.label} | combined P = ${fmtPct(tree.exitProbability(sel, chance))} from ${n} path${n === 1 ? "" : "s"}`;
     } else if (sel instanceof Link) {
-      info = `Connection: ${sel.leaf.label} → ${sel.leaf.exit?.label} | P = ${fmtPct(sel.leaf.cumulative)} | Delete removes it`;
+      const to = sel.leaf.exit?.label ?? sel.leaf.next?.label;
+      info = `Connection: ${sel.leaf.label} → ${to} | P = ${fmtPct(chance.get(sel.leaf)!)} | Delete removes it`;
     } else {
-      info = sel.isRoot ? `${sel.label} (start)` : `${sel.pathLabels().join(" → ")} | Chance = ${fmtPct(sel.cumulative)}`;
+      info = sel.isRoot ? `${sel.label} (start)` : `${sel.pathLabels().join(" → ")} | Chance = ${fmtPct(chance.get(sel)!)}`;
       if (!sel.isRoot) info += ` | branch = ${fmtPct(sel.prob)}`;
+      if (routes.get(sel)! > 1) info += ` | ${routes.get(sel)} routes`;
       if (sel.exit !== null) info += ` | exit = ${sel.exit.label}`;
+      if (sel.next !== null) info += ` | continues at ${sel.next.label}`;
     }
     this.setStatus(info);
   }
@@ -267,7 +284,7 @@ export class App {
     const linkId = hit.getAttribute("data-link");
     if (linkId !== null) {
       const leaf = this.items.get(Number(linkId));
-      return leaf instanceof Node && leaf.exit !== null ? new Link(leaf) : null;
+      return leaf instanceof Node && (leaf.exit !== null || leaf.next !== null) ? new Link(leaf) : null;
     }
     return this.items.get(Number(hit.getAttribute("data-id"))) ?? null;
   }
@@ -287,6 +304,14 @@ export class App {
         return;
       }
       const item = this.itemAt(e.target as Element);
+      if (this.pickFor) {
+        // Waiting for the node a leaf should continue at.
+        const leaf = this.pickFor;
+        this.cancelPick();
+        if (item instanceof Node) this.continueAt(leaf, item);
+        else this.setStatus("Cancelled: click a node to continue at.", true);
+        return;
+      }
       // Our own double-click detection: the DOM is redrawn between the two clicks.
       const now = performance.now();
       const last = this.lastClick;
@@ -333,7 +358,8 @@ export class App {
       this.overlay.innerHTML = renderDragLine(lp.x + NODE_W, lp.y, w.x, w.y);
       const target = this.itemAt(document.elementFromPoint(e.clientX, e.clientY));
       this.scene.querySelector(".drop-target")?.classList.remove("drop-target");
-      if (target instanceof Exit) this.scene.querySelector(`[data-id="${target.id}"]`)?.classList.add("drop-target");
+      const canDrop = target instanceof Exit || (target instanceof Node && !this.tree.continueProblem(d.leaf, target));
+      if (canDrop) this.scene.querySelector(`.node[data-id="${target.id}"], .exit[data-id="${target.id}"]`)?.classList.add("drop-target");
     });
 
     const endPointer = (e: PointerEvent) => {
@@ -348,9 +374,11 @@ export class App {
       const target = e.type === "pointerup" ? this.itemAt(document.elementFromPoint(e.clientX, e.clientY)) : null;
       if (target instanceof Exit) {
         this.linkExit(d.leaf, target);
+      } else if (target instanceof Node && target !== d.leaf) {
+        this.continueAt(d.leaf, target);
       } else {
         this.draw();
-        this.setStatus("Drop the link onto an exit node to connect this leaf to it.", true);
+        this.setStatus("Drop onto an exit to end this leaf there, or onto another node for it to continue at.", true);
       }
     };
     svg.addEventListener("pointerup", endPointer);
@@ -398,7 +426,9 @@ export class App {
       return [
         { label: "Remove connection", run: () => void this.deleteSelected() },
         { label: "Select leaf", run: () => this.select(item.leaf) },
-        { label: "Select exit", run: () => item.leaf.exit && this.select(item.leaf.exit) },
+        item.leaf.exit
+          ? { label: "Select exit", run: () => item.leaf.exit && this.select(item.leaf.exit) }
+          : { label: `Select “${item.leaf.next?.label}”`, run: () => item.leaf.next && this.select(item.leaf.next) },
       ];
     }
     if (item instanceof Exit) {
@@ -417,6 +447,8 @@ export class App {
       for (const ex of this.tree.exits) entries.push({ label: ex.label, run: () => this.linkExit(item, ex), checked: item.exit === ex });
       entries.push({ label: "New exit…", run: () => void this.addExit() });
       entries.push({ label: "No exit", run: () => this.linkExit(item, null), disabled: item.exit === null });
+      entries.push("sep", { label: "Continue at another node…", run: () => this.startPick(item) });
+      if (item.next) entries.push({ label: `Stop continuing at “${item.next.label}”`, run: () => this.unlink(item) });
     }
     entries.push(
       "sep",
@@ -515,6 +547,10 @@ export class App {
       if (t.closest("input, textarea, select, [contenteditable]")) return;
       if (e.key === "Escape") {
         this.hideMenu();
+        if (this.pickFor) {
+          this.cancelPick();
+          return this.setStatus("Cancelled.");
+        }
         return this.stopSimulation();
       }
       if (!this.menu.hidden) return; // let the menu's buttons take Enter etc.
@@ -547,6 +583,7 @@ export class App {
             ArrowDown: () => this.navigate("next"),
             f: () => this.zoomFit(),
             r: () => this.runSimulation(),
+            l: () => this.startPick(),
           }[key];
       if (!run) return;
       e.preventDefault();
@@ -602,7 +639,7 @@ export class App {
     if ("exit" in sel) item = this.tree.exits[sel.exit];
     else if ("link" in sel) {
       const leaf = nodes[sel.link];
-      item = leaf?.exit ? new Link(leaf) : leaf;
+      item = leaf?.exit || leaf?.next ? new Link(leaf) : leaf;
     } else item = nodes[sel.node];
     this.selected = item ?? this.tree.root;
     this.committed = { text: snap.text, sel: this.selectionRef() };
@@ -645,6 +682,7 @@ export class App {
 
   private async addUnder(parent: Node): Promise<void> {
     const oldExit = parent.exit;
+    const oldNext = parent.next;
     const child = parent.addChild(this.newLabel(), parent.remaining());
     this.selected = child;
     this.refresh();
@@ -654,6 +692,7 @@ export class App {
       // cancelled: undo the add
       child.remove();
       parent.exit = oldExit;
+      parent.next = oldNext;
       this.counter--;
       this.selected = parent;
       this.refresh();
@@ -661,10 +700,12 @@ export class App {
     }
     child.label = result.label;
     child.prob = result.prob;
-    child.exit = this.resolveExit(result.exitName);
+    child.setExit(this.resolveExit(result.exitName));
     this.changed(`add “${child.label}”`);
     if (oldExit !== null) {
       this.setStatus(`“${parent.label}” now branches onward, so it no longer leads to exit “${oldExit.label}”.`, true);
+    } else if (oldNext !== null) {
+      this.setStatus(`“${parent.label}” now branches onward, so it no longer continues at “${oldNext.label}”.`, true);
     }
   }
 
@@ -691,15 +732,50 @@ export class App {
     );
     if (name === null) return;
     const ex = this.tree.addExit(name);
-    if (leaf) leaf.exit = ex;
+    if (leaf) leaf.setExit(ex);
     else this.selected = ex;
     this.changed(`add exit “${name}”`);
   }
 
   linkExit(leaf: Node, ex: Exit | null): void {
     const old = leaf.exit;
-    leaf.exit = ex;
+    leaf.setExit(ex);
     this.changed(ex ? `link “${leaf.label}” to “${ex.label}”` : `remove connection “${leaf.label}” → “${old?.label}”`);
+  }
+
+  /** Make `leaf` continue at `target`, if that's allowed. */
+  continueAt(leaf: Node, target: Node): void {
+    const problem = this.tree.continueProblem(leaf, target);
+    if (problem) {
+      this.draw();
+      return this.setStatus(problem, true);
+    }
+    leaf.setNext(target);
+    this.changed(`continue “${leaf.label}” at “${target.label}”`);
+  }
+
+  /** Remove a leaf's outgoing connection, whether to an exit or to a node it continues at. */
+  unlink(leaf: Node): void {
+    const to = leaf.exit?.label ?? leaf.next?.label;
+    leaf.setExit(null);
+    leaf.setNext(null);
+    this.changed(`remove connection “${leaf.label}” → “${to}”`);
+  }
+
+  /** Wait for the user to click the node that `leaf` (by default the selected leaf) continues at. */
+  startPick(leaf = this.selected instanceof Link ? this.selected.leaf : this.selected): void {
+    if (!(leaf instanceof Node) || !leaf.isLeaf) {
+      return this.setStatus("Select a leaf first: only leaves can continue at another node.", true);
+    }
+    this.stopSimulation();
+    this.pickFor = leaf;
+    this.svg.classList.add("picking");
+    this.setStatus(`Click the node “${leaf.label}” should continue at, or press Esc to cancel.`);
+  }
+
+  private cancelPick(): void {
+    this.pickFor = null;
+    this.svg.classList.remove("picking");
   }
 
   async editSelected(): Promise<void> {
@@ -722,16 +798,20 @@ export class App {
     if (result === null) return;
     item.label = result.label;
     item.prob = result.prob;
-    if (item.isLeaf) item.exit = this.resolveExit(result.exitName);
+    if (item.isLeaf) {
+      // An empty exit field leaves a continue link alone; choosing an exit replaces it.
+      const ex = this.resolveExit(result.exitName);
+      if (ex || !item.next) item.setExit(ex);
+    }
     this.changed(`edit “${item.label}”`);
   }
 
   async deleteSelected(): Promise<void> {
     const item = this.selected;
     if (item instanceof Link) {
-      // Remove just this connection; the leaf stays, now without an exit.
+      // Remove just this connection; the leaf stays, now ending without an exit.
       this.selected = item.leaf;
-      this.linkExit(item.leaf, null);
+      this.unlink(item.leaf);
       return;
     }
     if (item instanceof Exit) {
@@ -749,13 +829,16 @@ export class App {
       this.setStatus("The entrance node can't be deleted (use New to start over).", true);
       return;
     }
-    if (!item.isLeaf) {
-      const n = [...item.walk()].length - 1;
-      const msg = `Delete “${item.label}” and its ${n} descendant node${n === 1 ? "" : "s"}?`;
+    const gone = new Set(item.walk());
+    const linksIn = [...this.tree.root.walk()].filter((n) => !gone.has(n) && n.next && gone.has(n.next)).length;
+    if (gone.size > 1 || linksIn > 0) {
+      const n = gone.size - 1;
+      let msg = `Delete “${item.label}”${n ? ` and its ${n} descendant node${n === 1 ? "" : "s"}` : ""}?`;
+      if (linksIn) msg += ` ${linksIn} ${linksIn === 1 ? "leaf continues" : "leaves continue"} into it and will end there instead.`;
       if ((await confirmDialog("Delete branch", msg, [["cancel", "Cancel"], ["yes", "Delete"]])) !== "yes") return;
     }
     const parent = item.parent!;
-    item.remove();
+    this.tree.removeNode(item);
     this.selected = parent;
     this.changed(`delete “${item.label}”`);
   }
@@ -785,8 +868,9 @@ export class App {
   navigate(where: "parent" | "child" | "prev" | "next"): void {
     const s = this.selected;
     if (s instanceof Link) {
+      const to = s.leaf.exit ?? s.leaf.next;
       if (where === "parent") this.select(s.leaf);
-      else if (where === "child" && s.leaf.exit) this.select(s.leaf.exit);
+      else if (where === "child" && to) this.select(to);
       return;
     }
     if (s instanceof Exit) {
@@ -803,6 +887,7 @@ export class App {
     else if (where === "child") {
       if (s.children.length) this.select(s.children[s.children.length >> 1]);
       else if (s.exit) this.select(s.exit);
+      else if (s.next) this.select(s.next);
     } else if ((where === "prev" || where === "next") && s.parent) {
       const sibs = s.parent.children;
       const next = sibs[sibs.indexOf(s) + (where === "prev" ? -1 : 1)];
@@ -815,13 +900,25 @@ export class App {
   /** Simulate one event: walk from the root, picking branches by probability, and show it. */
   runSimulation(): void {
     this.stopSimulation(false);
-    const { path, stoppedEarly } = simulate(this.tree.root);
+    const { path, stoppedEarly, chance } = simulate(this.tree.root);
     const leaf = path[path.length - 1];
-    const exit = !stoppedEarly && leaf.isLeaf ? leaf.exit : null;
+    const exit = !stoppedEarly && leaf.isOutcome ? leaf.exit : null;
     const labels = path.map((n) => n.label);
+    // What the run has passed through after `n` steps: nodes, the branches it took into
+    // them, and the continue links it followed.
+    const view = (n: number, end: Exit | null): SimulationView => {
+      const steps = path.slice(0, n);
+      return {
+        path: new Set(steps),
+        edges: new Set(steps.filter((m, i) => i > 0 && m.parent === steps[i - 1])),
+        jumps: new Set(steps.filter((m, i) => i < steps.length - 1 && m.next === steps[i + 1])),
+        current: steps[steps.length - 1],
+        exit: end,
+      };
+    };
 
     const finish = () => {
-      this.sim = { path: new Set(path), current: leaf, exit };
+      this.sim = view(path.length, exit);
       this.draw();
       this.scrollIntoView(exit ?? leaf);
       let text = `Simulated: ${labels.join(" → ")}`;
@@ -830,7 +927,7 @@ export class App {
         text += `, then stopped: “${leaf.label}”'s branches only cover ${fmtPct(covered)} and this run fell in the other ${fmtPct(1 - covered)}`;
       } else {
         text += exit ? ` → exit “${exit.label}”` : " (no exit)";
-        text += ` | chance of this path: ${fmtPct(leaf.cumulative)}`;
+        text += ` | chance of this path: ${fmtPct(chance)}`;
       }
       this.setStatus(text + " | R to run again, Esc to clear");
     };
@@ -841,7 +938,7 @@ export class App {
     const step = () => {
       if (i === path.length) return finish();
       const node = path[i++];
-      this.sim = { path: new Set(path.slice(0, i)), current: node, exit: null };
+      this.sim = view(i, null);
       this.draw();
       this.scrollIntoView(node);
       this.setStatus(`Simulating… ${labels.slice(0, i).join(" → ")}`);

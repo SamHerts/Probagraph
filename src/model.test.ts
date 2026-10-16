@@ -19,7 +19,8 @@ describe("save files", () => {
     expect(tree.exits.map((e) => e.label)).toEqual(["Full Success", "Partial Success", "Postponed", "Mission Lost"]);
     expect(p("Full Success")).toBeCloseTo(0.7 * 0.9 * 0.85 * 0.8 + 0.2 * 0.6 * 0.5, 12);
     const total = tree.exits.reduce((s, e) => s + tree.exitProbability(e), 0);
-    const unassigned = tree.unassignedLeaves().reduce((s, n) => s + n.cumulative, 0);
+    const { chance } = tree.analyze();
+    const unassigned = tree.unassignedLeaves().reduce((s, n) => s + chance.get(n)!, 0);
     expect(total + unassigned).toBeCloseTo(1, 12);
   });
 
@@ -280,5 +281,114 @@ describe("probability precision", () => {
 
   it("rejects non-numeric probabilities when loading", () => {
     expect(() => ProbabilityTree.fromDict({ nodes: [{ id: 0, label: "Start" }, { id: 1, parent: 0, label: "A", prob: "lots" }] })).toThrow(/probability/);
+  });
+});
+
+describe("merging routes", () => {
+  // Start ─50%─ A ─100%─ M ─┬─25%─ X
+  //   └─50%─ B ─100%─ B2 ┄┄┘ └─75%─ Y      (B2 continues at M)
+  const build = () => {
+    const tree = new ProbabilityTree();
+    const a = tree.root.addChild("A", 0.5);
+    const b = tree.root.addChild("B", 0.5);
+    const m = a.addChild("M", 1);
+    const x = m.addChild("X", 0.25);
+    const y = m.addChild("Y", 0.75);
+    const b2 = b.addChild("B2", 1);
+    b2.setNext(m);
+    return { tree, a, b, m, x, y, b2 };
+  };
+
+  it("adds up the chance of every route into a node", () => {
+    const { tree, m, x, y, b2 } = build();
+    const { chance, routes, incoming } = tree.analyze();
+    expect(chance.get(m)).toBeCloseTo(1, 12);
+    expect(chance.get(x)).toBeCloseTo(0.25, 12);
+    expect(chance.get(y)).toBeCloseTo(0.75, 12);
+    expect(routes.get(m)).toBe(2);
+    expect(routes.get(x)).toBe(2);
+    expect(incoming.get(m)).toEqual([b2]);
+    expect(tree.outcomes()).toEqual([x, y]); // B2 passes its chance on, so it isn't an outcome
+  });
+
+  it("places a merge node to the right of every route into it", () => {
+    const { tree, a, m, b2 } = build();
+    const { depth } = tree.analyze();
+    expect(depth.get(a)).toBe(1);
+    expect(depth.get(b2)).toBe(2);
+    expect(depth.get(m)).toBe(3); // after B2, not just after A
+  });
+
+  it("counts exit chances through merges", () => {
+    const { tree, x, y } = build();
+    const win = tree.addExit("Win");
+    x.setExit(win);
+    y.setExit(win);
+    expect(tree.exitProbability(win)).toBeCloseTo(1, 12);
+  });
+
+  it("explains why a link isn't allowed", () => {
+    const { tree, a, b, m, x, b2 } = build();
+    expect(tree.continueProblem(x, x)).toMatch(/itself/);
+    expect(tree.continueProblem(x, tree.root)).toMatch(/start node/);
+    expect(tree.continueProblem(b, m)).toMatch(/Only leaves/);
+    expect(tree.continueProblem(x, a)).toMatch(/loop/); // A leads to M, which leads to X
+    expect(tree.continueProblem(x, b2)).toMatch(/loop/); // B2 continues at M, which leads to X
+    expect(tree.continueProblem(b2, x)).toBeNull();
+  });
+
+  it("keeps a leaf to one connection: an exit, a continue link, or new branches", () => {
+    const { tree, m, b2 } = build();
+    const win = tree.addExit("Win");
+    b2.setExit(win);
+    expect(b2.next).toBeNull();
+    b2.setNext(m);
+    expect(b2.exit).toBeNull();
+    b2.addChild("More", 1);
+    expect(b2.next).toBeNull();
+  });
+
+  it("removes continue links into a deleted branch", () => {
+    const { tree, a, b2 } = build();
+    expect(tree.removeNode(a)).toBe(1);
+    expect(b2.next).toBeNull();
+    expect(tree.outcomes().map((n) => n.label)).toEqual(["B2"]);
+  });
+
+  it("saves and loads continue links", () => {
+    const { tree } = build();
+    const text = serializeTree(tree);
+    expect(text).toContain('{"id": 6, "parent": 5, "label": "B2", "prob": 1.0, "next": 2}');
+    const back = parseTree(text);
+    const b2 = [...back.root.walk()].find((n) => n.label === "B2")!;
+    expect(b2.next?.label).toBe("M");
+    expect(serializeTree(back)).toBe(text);
+  });
+
+  const nodes = (...extra: object[]) => ({
+    nodes: [
+      { id: 0, label: "Start" },
+      { id: 1, parent: 0, label: "A", prob: 0.5 },
+      { id: 2, parent: 0, label: "B", prob: 0.5 },
+      ...extra,
+    ],
+  });
+  it.each([
+    [nodes({ id: 3, parent: 1, label: "C", prob: 1, next: 9 }), /missing node 9/],
+    [nodes({ id: 3, parent: 1, label: "C", prob: 1, next: 0 }), /start node/],
+    [{ nodes: [{ id: 0, label: "Start" }, { id: 1, parent: 0, label: "A", prob: 1, next: 2 }, { id: 2, parent: 0, label: "B", prob: 1, next: 1 }] }, /loop/],
+    [nodes({ id: 3, parent: 1, label: "C", prob: 1, next: 2, exit: "Win" }), /both an exit/],
+    [{ nodes: [{ id: 0, label: "Start" }, { id: 1, parent: 0, label: "A", prob: 1, next: 2 }, { id: 2, parent: 1, label: "B", prob: 1 }] }, /has branches/],
+  ])("rejects a bad continue link %#", (data, message) => {
+    expect(() => ProbabilityTree.fromDict(data)).toThrow(message);
+  });
+
+  it("simulates through a continue link", () => {
+    const { tree } = build();
+    // 0.9 → B (second half), 0.3 → B2 (its only branch), B2 continues at M, 0.5 → Y (after X's 25%).
+    const rolls = [0.9, 0.3, 0.5];
+    const r = simulate(tree.root, () => rolls.shift()!);
+    expect(r.path.map((n) => n.label)).toEqual(["Start", "B", "B2", "M", "Y"]);
+    expect(r.chance).toBeCloseTo(0.5 * 0.75, 12); // this route's chance, not Y's total
   });
 });

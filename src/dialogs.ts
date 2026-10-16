@@ -89,6 +89,9 @@ export function editNode(node: Node, exits: Exit[], title: string): Promise<Node
       `<label>Exit<input name="exit" list="exit-options" value="${esc(node.exit?.label ?? "")}" placeholder="${NO_EXIT}"></label>` +
       `<datalist id="exit-options">${exits.map((e) => `<option value="${esc(e.label)}">`).join("")}</datalist>` +
       `<p class="hint">Pick an exit, type a new name to create one, or leave empty for none.</p>`;
+    if (node.next) {
+      html += `<p class="hint">Continues at “${esc(node.next.label)}”. Choosing an exit replaces that.</p>`;
+    }
   }
   return showDialog(title, html, (form) => {
     const data = new FormData(form);

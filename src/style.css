@@ -419,6 +419,52 @@ svg text {
   fill: var(--c);
 }
 
+/* Continue links: a leaf that carries on at another node. Dashed, so they read as a jump
+   rather than a branch. */
+.jump {
+  cursor: pointer;
+}
+
+.jump path.wire {
+  fill: none;
+  stroke: var(--edge);
+  stroke-dasharray: 7 5;
+  stroke-linecap: round;
+}
+
+.jump path.head {
+  fill: var(--edge);
+}
+
+.jump path.hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  stroke-linecap: round;
+}
+
+.jump:hover path.hit {
+  stroke: var(--edge);
+  opacity: 0.2;
+}
+
+.jump.strong path.wire {
+  stroke: var(--accent);
+}
+
+.jump.strong path.head {
+  fill: var(--accent);
+}
+
+.jump.selected path.hit {
+  stroke: var(--accent);
+  opacity: 0.3;
+}
+
+.stripe.jump-stripe {
+  fill: var(--edge);
+}
+
 .link.faded,
 .junction.faded {
   opacity: 0.2;
@@ -518,6 +564,14 @@ svg text {
   fill: var(--warn);
 }
 
+.caption.routes {
+  text-anchor: start;
+}
+
+td.path .crumbs .routes {
+  white-space: nowrap;
+}
+
 .exit .card {
   fill: var(--surface);
   stroke: var(--c);
@@ -548,6 +602,17 @@ svg text {
   font-variant-numeric: tabular-nums;
 }
 
+.node.drop-target .halo {
+  stroke: var(--accent);
+  stroke-width: 6;
+  opacity: 0.5;
+}
+
+#svg.picking,
+#svg.picking .node {
+  cursor: crosshair;
+}
+
 .exit.drop-target .halo {
   stroke: var(--c);
   stroke-width: 6;
@@ -572,7 +637,8 @@ svg text {
 .exit,
 .edge,
 .pill,
-.link {
+.link,
+.jump {
   transition: opacity 0.2s ease;
 }
 
@@ -593,6 +659,19 @@ svg text {
 
 #svg.simulating .link.sim {
   opacity: 1;
+}
+
+#svg.simulating .jump:not(.sim) {
+  opacity: 0.2;
+}
+
+.jump.sim path.wire {
+  stroke: var(--sim);
+  stroke-width: 4;
+}
+
+.jump.sim path.head {
+  fill: var(--sim);
 }
 
 .edge.sim {

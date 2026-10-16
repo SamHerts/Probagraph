@@ -73,6 +73,14 @@ it. Only leaves can lead to an exit, so adding a branch to a linked leaf unlinks
 Each node shows its chance below its name, and the yellow label on the line into it is
 the branch probability. Selecting an exit highlights the connections that lead into it.
 
+A leaf can also continue at another node instead of ending, for when different routes
+lead to the same situation and what happens next is the same either way. The node then
+merges those routes: its chance is the total of every route into it, it says how many
+routes lead in, and everything after it is shared, so it only needs building once.
+Continue links are drawn as dashed arrows. Links that would loop back are refused. Only
+merge routes when what follows really doesn't depend on how you got there; if it does,
+keep separate branches.
+
 Simulate runs a single event: starting at the entrance node, it takes each branch at
 random according to its probability, and highlights the path it took and the exit it
 reached.
@@ -96,8 +104,10 @@ complete.
 - Link a leaf to an exit: drag the leaf onto the exit, use "Send to exit" in the
   right-click menu, or pick or type one in the leaf's edit dialog
 - Delete a node and its subtree, or an exit: Delete or Backspace
-- Remove a single connection from a leaf to an exit: click the connection, then
-  Delete or Backspace
+- Continue a leaf at another node: drag the leaf onto the node, or select the leaf,
+  press L (or right-click and choose "Continue at another node…"), then click the node
+- Remove a single connection from a leaf to an exit or to the node it continues at:
+  click the connection, then Delete or Backspace
 - Split children evenly, or scale them to 100%: toolbar or right-click menu
 - Pan: drag empty space, or scroll (Shift for horizontal)
 - Zoom: Ctrl+scroll or pinch, Ctrl+plus and Ctrl+minus, Ctrl+0 to reset, F to fit
@@ -186,6 +196,7 @@ so the file stays flat however deep the tree grows:
 }
 ```
 
-An exit with a chosen color is saved as `{"label": "Win", "color": "#16a34a"}` instead
+A leaf that continues at another node has `"next"` set to that node's id. An exit with
+a chosen color is saved as `{"label": "Win", "color": "#16a34a"}` instead
 of just its name. Files saved in the older nested format still open. `examples/mars_lander.json` is a
 worked example.

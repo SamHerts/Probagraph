@@ -36,7 +36,10 @@ export class Node {
   readonly id = nextId++;
   children: Node[] = [];
   parent: Node | null = null;
-  exit: Exit | null = null; // only meaningful on leaves
+  // A leaf either ends (at an exit, or at no exit) or continues at another node, which
+  // turns the tree into a graph where several routes can merge. At most one is set.
+  exit: Exit | null = null;
+  next: Node | null = null;
 
   /** `prob` is the probability of taking the edge from the parent to this node (0..1). */
   constructor(
@@ -52,11 +55,26 @@ export class Node {
     return this.children.length === 0;
   }
 
-  /** Probability of reaching this node from the root (product along the path). */
-  get cumulative(): number {
-    let p = this.prob;
-    for (let n = this.parent; n !== null; n = n.parent) p *= n.prob;
-    return p;
+  /** A leaf where runs end, as opposed to one that continues at another node. */
+  get isOutcome(): boolean {
+    return this.isLeaf && this.next === null;
+  }
+
+  /** Where a run goes from here: the children, or the node this leaf continues at. */
+  get successors(): Node[] {
+    return this.next ? [this.next] : this.children;
+  }
+
+  /** End this leaf at `ex` (null: at no exit). Ending somewhere replaces continuing. */
+  setExit(ex: Exit | null): void {
+    this.exit = ex;
+    if (ex) this.next = null;
+  }
+
+  /** Continue this leaf at `target` (null: stop continuing). Replaces any exit. */
+  setNext(target: Node | null): void {
+    this.next = target;
+    if (target) this.exit = null;
   }
 
   childrenSum(): number {
@@ -74,7 +92,9 @@ export class Node {
   }
 
   addChild(label: string, prob: number): Node {
-    this.exit = null; // a node that branches onward no longer ends at an exit
+    // A node that branches onward no longer ends at an exit or continues elsewhere.
+    this.exit = null;
+    this.next = null;
     const child = new Node(label, prob);
     child.parent = this;
     this.children.push(child);
@@ -128,6 +148,7 @@ export interface NodeRecord {
   label: string;
   prob?: number;
   exit?: string;
+  next?: number; // id of the node this leaf continues at
 }
 
 /** An exit is saved as just its name, or as an object when it has a chosen colour. */
@@ -170,6 +191,14 @@ function isObject(v: unknown): v is Json {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/** Chances and shape of the graph, worked out in one pass (see ProbabilityTree.analyze). */
+export interface Analysis {
+  chance: Map<Node, number>; // chance of reaching each node, over every route into it
+  routes: Map<Node, number>; // how many distinct routes from the start reach each node
+  depth: Map<Node, number>; // the longest route from the start, in steps: the node's column
+  incoming: Map<Node, Node[]>; // the leaves that continue at each node
+}
+
 export class ProbabilityTree {
   constructor(
     public root: Node = new Node("Start"),
@@ -196,30 +225,100 @@ export class ProbabilityTree {
   }
 
   /** Combined probability of all paths that end in this exit. */
-  exitProbability(ex: Exit): number {
-    return this.leavesOf(ex).reduce((s, n) => s + n.cumulative, 0);
+  exitProbability(ex: Exit, chance = this.analyze().chance): number {
+    return this.leavesOf(ex).reduce((s, n) => s + chance.get(n)!, 0);
   }
 
+  /** The leaves where runs end (not those that continue at another node). */
+  outcomes(): Node[] {
+    return this.root.leaves().filter((n) => n.isOutcome);
+  }
+
+  /** Outcome leaves that don't lead to any exit. */
   unassignedLeaves(): Node[] {
-    return this.root.leaves().filter((n) => n.exit === null);
+    return this.outcomes().filter((n) => n.exit === null);
+  }
+
+  /**
+   * Work out every node's chance, route count and column in one pass, in graph order:
+   * a node is visited once everything that leads into it has been. Throws if continue
+   * links form a loop.
+   */
+  analyze(): Analysis {
+    const nodes = [...this.root.walk()];
+    const incoming = new Map(nodes.map((n): [Node, Node[]] => [n, []]));
+    for (const n of nodes) if (n.next) incoming.get(n.next)?.push(n);
+    const waiting = new Map(nodes.map((n) => [n, (n.parent ? 1 : 0) + incoming.get(n)!.length]));
+    const chance = new Map(nodes.map((n) => [n, 0]));
+    const routes = new Map(nodes.map((n) => [n, 0]));
+    const depth = new Map(nodes.map((n) => [n, 0]));
+    chance.set(this.root, 1);
+    routes.set(this.root, 1);
+
+    const ready = [this.root];
+    let visited = 0;
+    while (ready.length) {
+      const n = ready.pop()!;
+      visited++;
+      for (const m of n.successors) {
+        const share = n.next ? 1 : m.prob; // a continue link carries the whole chance
+        chance.set(m, chance.get(m)! + chance.get(n)! * share);
+        routes.set(m, routes.get(m)! + routes.get(n)!);
+        depth.set(m, Math.max(depth.get(m)!, depth.get(n)! + 1));
+        waiting.set(m, waiting.get(m)! - 1);
+        if (waiting.get(m) === 0) ready.push(m);
+      }
+    }
+    if (visited !== nodes.length) throw new Error("continue links form a loop");
+    return { chance, routes, depth, incoming };
+  }
+
+  /** Why `leaf` can't continue at `target`, or null if it can. */
+  continueProblem(leaf: Node, target: Node): string | null {
+    if (!leaf.isLeaf) return `Only leaves can continue at another node; “${leaf.label}” has branches.`;
+    if (target === leaf) return "A node can't continue at itself.";
+    if (target.isRoot) return "Every run already starts at the start node, so nothing can continue there.";
+    // Linking is only safe if the target can't lead back to the leaf.
+    const seen = new Set<Node>();
+    const stack = [target];
+    while (stack.length) {
+      const n = stack.pop()!;
+      if (n === leaf) return `That would make a loop: “${target.label}” already leads to “${leaf.label}”.`;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      stack.push(...n.successors);
+    }
+    return null;
+  }
+
+  /** Remove `node` and its subtree; returns how many continue links into it were removed. */
+  removeNode(node: Node): number {
+    const gone = new Set(node.walk());
+    let unlinked = 0;
+    for (const n of this.root.walk()) {
+      if (!gone.has(n) && n.next && gone.has(n.next)) {
+        n.next = null;
+        unlinked++;
+      }
+    }
+    node.remove();
+    return unlinked;
   }
 
   // --- serialization -------------------------------------------------------------
 
   toDict(): TreeRecord {
-    const ids = new Map<Node, number>();
-    const nodes: NodeRecord[] = [];
-    let i = 0;
-    for (const n of this.root.walk()) {
-      ids.set(n, i);
+    const all = [...this.root.walk()];
+    const ids = new Map(all.map((n, i) => [n, i]));
+    const nodes = all.map((n, i): NodeRecord => {
       const d: NodeRecord =
         n.parent === null
           ? { id: i, label: n.label }
           : { id: i, parent: ids.get(n.parent)!, label: n.label, prob: n.prob };
       if (n.exit !== null && n.isLeaf) d.exit = n.exit.label;
-      nodes.push(d);
-      i++;
-    }
+      if (n.next !== null && n.isLeaf) d.next = ids.get(n.next)!;
+      return d;
+    });
     const exits = this.exits.map((e): ExitRecord => (e.color ? { label: e.label, color: e.color } : e.label));
     return { version: 3, exits, nodes };
   }
@@ -273,8 +372,22 @@ export class ProbabilityTree {
       if (node.isLeaf) node.exit = ex;
     }
 
+    for (const d of records) {
+      if (!("next" in d)) continue;
+      const node = nodes.get(toInt(d.id, "node id"))!;
+      const target = nodes.get(toInt(d.next, "next node id"));
+      if (target === undefined) throw new Error(`node ${d.id} continues at missing node ${d.next}`);
+      if (!node.isLeaf) throw new Error(`node ${d.id} has branches, so it can't continue at another node`);
+      if (node.exit) throw new Error(`node ${d.id} has both an exit and a node to continue at`);
+      node.next = target;
+    }
+
     const tree = new ProbabilityTree(roots[0], exits);
     tree.root.prob = 1;
+    if (roots[0].next || [...nodes.values()].some((n) => n.next === roots[0])) {
+      throw new Error("nothing can continue at the start node");
+    }
+    tree.analyze(); // throws if the continue links form a loop
     return tree;
   }
 
@@ -317,6 +430,7 @@ export function serializeTree(tree: ProbabilityTree): string {
     line += `, "label": ${JSON.stringify(n.label)}`;
     if (n.prob !== undefined) line += `, "prob": ${pyFloat(n.prob)}`;
     if (n.exit !== undefined) line += `, "exit": ${JSON.stringify(n.exit)}`;
+    if (n.next !== undefined) line += `, "next": ${n.next}`;
     return line + "}";
   });
   const exitJson = (e: ExitRecord) =>
@@ -364,17 +478,27 @@ export function fmtPct(p: number): string {
 export interface SimulationResult {
   path: Node[]; // from the root to where the run ended
   stoppedEarly: boolean; // true if the run fell in the share a node's branches don't cover
+  chance: number; // the chance of this particular route
 }
 
 /**
  * Simulate one event: start at the root and repeatedly take a branch at random, weighted
- * by its probability, until reaching a leaf. If a node's branches add up to less than
- * 100%, the run can land in the missing share and stop there. `random` returns [0, 1).
+ * by its probability, until reaching an outcome leaf; leaves that continue at another
+ * node carry on from there. If a node's branches add up to less than 100%, the run can
+ * land in the missing share and stop there. `random` returns [0, 1).
  */
 export function simulate(root: Node, random: () => number = Math.random): SimulationResult {
   const path = [root];
   let node = root;
-  while (!node.isLeaf) {
+  let chance = 1;
+  while (!node.isOutcome) {
+    // Loops are refused when links are made or files are opened; this is a last resort.
+    if (path.length > 100000) throw new Error("simulation went around a loop");
+    if (node.next) {
+      node = node.next;
+      path.push(node);
+      continue;
+    }
     const total = node.childrenSum();
     // Complete (or over-full) branches are scaled to their actual sum, so rounding
     // can't make a complete node stop early.
@@ -384,9 +508,10 @@ export function simulate(root: Node, random: () => number = Math.random): Simula
       r -= c.prob;
       return false;
     });
-    if (next === undefined) return { path, stoppedEarly: true };
+    if (next === undefined) return { path, stoppedEarly: true, chance: chance * Math.max(0, 1 - total) };
+    chance *= next.prob;
     path.push(next);
     node = next;
   }
-  return { path, stoppedEarly: false };
+  return { path, stoppedEarly: false, chance };
 }

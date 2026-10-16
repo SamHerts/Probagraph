@@ -1,6 +1,6 @@
 // Positions every node and exit in world coordinates (zoom is applied by the view).
 
-import type { ProbabilityTree, Exit, Node } from "./model";
+import type { Analysis, ProbabilityTree, Exit, Node } from "./model";
 
 export const NODE_W = 164;
 export const NODE_H = 60;
@@ -24,28 +24,32 @@ export interface Layout {
   height: number;
 }
 
-export function layoutTree(tree: ProbabilityTree): Layout {
+/**
+ * Rows follow the tree: leaves stack top to bottom and each parent sits midway between
+ * its children. Columns follow the graph: a node's column is its longest route from the
+ * start, so a node that other leaves continue at sits to the right of all of them.
+ */
+export function layoutTree(tree: ProbabilityTree, analysis: Analysis): Layout {
   const pos = new Map<Node | Exit, Point>();
   let nextY = MARGIN + NODE_H / 2;
-  let maxDepth = 0;
+  const maxDepth = Math.max(...analysis.depth.values());
   let bottom = 0;
 
-  const place = (node: Node, depth: number): number => {
-    maxDepth = Math.max(maxDepth, depth);
-    const x = MARGIN + depth * (NODE_W + COL_GAP);
+  const place = (node: Node): number => {
+    const x = MARGIN + analysis.depth.get(node)! * (NODE_W + COL_GAP);
     let y: number;
     if (node.isLeaf) {
       y = nextY;
       nextY += NODE_H + ROW_GAP;
     } else {
-      const ys = node.children.map((c) => place(c, depth + 1));
+      const ys = node.children.map(place);
       y = (ys[0] + ys[ys.length - 1]) / 2;
     }
     pos.set(node, { x, y });
     bottom = Math.max(bottom, y);
     return y;
   };
-  place(tree.root, 0);
+  place(tree.root);
 
   // Exits sit in their own column to the right, each as close as possible to the
   // average height of the leaves feeding it, without overlapping one another.
